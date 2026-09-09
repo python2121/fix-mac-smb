@@ -56,7 +56,7 @@ the kernel reports the mount table changed.
 
 ```
 make            # debug build
-make test       # run the test harness (63 tests, no XCTest)
+make test       # run the test harness (76 tests, no XCTest)
 make app        # build/SMB Keeper.app, ad-hoc signed
 make install    # copy to ~/Applications, link CLI into ~/bin, start at login
 make uninstall  # remove the agent, app, and CLI link (config and logs stay)
@@ -105,19 +105,30 @@ smbkeeper shares <server>          # list what a server exports
 smbkeeper doctor                   # mounts, reachability, keychain, knobs
 ```
 
-The menu bar icon shows a checkmark when every share is healthy, an exclamation
-mark when one is stale or failing, and an X when one is unmounted. Each share
-has a submenu with mount, unmount, force unmount, reveal, an "Eject Before
-Sleep" toggle, and "Stop Monitoring This Share", which forgets the share and
-leaves the volume exactly as it is, mounted or not.
+Left-clicking the menu bar icon opens a panel; right-clicking gives a plain
+menu as a fallback. The icon itself shows a checkmark when every share is
+healthy, an exclamation mark when one is stale or failing, and an X when one is
+unmounted.
 
-"Add Share" opens a panel: type a server and account, optionally a password,
+The panel lists every share worst first: anything needing attention is at the
+top, healthy shares below, paused ones last. Each row carries a state badge, the
+share's name, how full the volume is, a bar showing the same, an Eject button, a
+Reveal in Finder button, and a chevron. Opening a row adds unmount, force
+unmount and stop-monitoring buttons plus a six-field detail grid. The footer
+sums up the shares and free space and holds check-now, open-log, add-share and a
+settings menu.
+
+"Add share" opens a panel: type a server and account, optionally a password,
 then press "Find Shares" to ask the server what it exports and pick one from
 the list. Shares already being monitored are left out of that list, and you can
 type a share name directly if the server is not answering. A typed password is
 written to the login keychain through the same kind of item Finder creates, so
 macOS can mount silently afterwards; the secret is passed to `security` over a
 pipe rather than on a command line where other processes could read it.
+
+Stop monitoring forgets a share and leaves the volume exactly as it is, mounted
+or not. Ejecting before sleep is a per-share setting the CLI can toggle with
+`smbkeeper set <name> eject-on-sleep on|off`.
 
 The configuration file is edited by the app and the CLI, so there is no menu
 item for opening or reloading it. `smbkeeper` changes take effect immediately

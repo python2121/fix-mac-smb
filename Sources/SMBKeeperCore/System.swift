@@ -9,7 +9,18 @@ public protocol SystemAdapter: AnyObject {
     func unmount(path: String, force: Bool, timeout: Double) -> UnmountResult
     func removeStaleMountDirectory(_ path: String)
     func mount(url: URL, mountPoint: String?, timeout: Double) -> MountResult
+    /// Size and free space of a mounted volume. Declared here, not only in the
+    /// extension below: a requirement that lives solely in an extension is
+    /// statically dispatched through the existential, so the default would
+    /// shadow every implementation.
+    func capacity(path: String, timeout: Double) -> VolumeCapacity?
     func now() -> Date
+}
+
+public extension SystemAdapter {
+    /// Adapters that cannot report capacity return nil and the panel simply
+    /// omits the figure.
+    func capacity(path: String, timeout: Double) -> VolumeCapacity? { nil }
 }
 
 /// The real thing.
@@ -59,6 +70,10 @@ public final class LiveSystem: SystemAdapter {
 
     public func mount(url: URL, mountPoint: String?, timeout: Double) -> MountResult {
         Mounter.mount(url: url, mountPoint: mountPoint, allowUI: false, timeout: timeout)
+    }
+
+    public func capacity(path: String, timeout: Double) -> VolumeCapacity? {
+        Prober.capacity(path: path, timeout: timeout)
     }
 
     public func now() -> Date { Date() }

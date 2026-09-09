@@ -676,7 +676,8 @@ h.test("controller: manual mount of an already mounted share just probes it") {
     let c = ShareController(config: makeShare("Alpha"), settings: testSettings(), system: sys, log: quietLog)
     c.requestMount()
     expect(waitUntil(3) { c.currentStatus.state == .healthy })
-    expectEqual(sys.calls, ["probe /Volumes/Alpha"])
+    expectEqual(sys.calls, ["probe /Volumes/Alpha", "capacity /Volumes/Alpha"],
+                "a healthy probe is followed by the capacity read")
     expectEqual(c.currentStatus.consecutiveFailures, 0)
 }
 
@@ -700,9 +701,10 @@ h.test("controller: schedule coalesces to the earliest pending request") {
     c.schedule(after: 5, reason: "late")
     c.schedule(after: 0.05, reason: "soon")
     c.schedule(after: 3, reason: "later")
-    expect(waitUntil(2) { sys.calls.count == 1 }, "one probe ran")
+    expect(waitUntil(2) { sys.calls.contains { $0.hasPrefix("probe") } }, "one probe ran")
     Thread.sleep(forTimeInterval: 0.3)
-    expectEqual(sys.calls.count, 1, "only the earliest fired; later ones were coalesced")
+    expectEqual(sys.calls.filter { $0.hasPrefix("probe") }.count, 1,
+                "only the earliest fired; later ones were coalesced")
 }
 
 h.test("controller: status change callback fires on transitions") {
@@ -716,6 +718,168 @@ h.test("controller: status change callback fires on transitions") {
     sys.probeResults["/Volumes/Alpha"] = .hung
     c.evaluateSync(reason: "2")
     expectEqual(seen, [.healthy, .stale])
+}
+
+// MARK: - Format
+
+h.test("format: byte sizes use decimal units") {
+    expectEqual(Format.bytes(UInt64(0)), "0 B")
+    expectEqual(Format.bytes(UInt64(512)), "512 B")
+    expectEqual(Format.bytes(UInt64(1_500)), "1.5 KB")
+    expectEqual(Format.bytes(UInt64(7_400_000_000_000)), "7.4 TB")
+    expectEqual(Format.bytes(UInt64(2_500_000_000_000_000)), "2.5 PB")
+}
+
+h.test("format: latency switches to seconds above a second") {
+    expectEqual(Format.latency(milliseconds: 30), "30 ms")
+    expectEqual(Format.latency(milliseconds: 999), "999 ms")
+    expectEqual(Format.latency(milliseconds: 1_500), "1.5 s")
+}
+
+h.test("format: relative time is coarse and never negative") {
+    let now = Date()
+    expectEqual(Format.relative(now, now: now), "just now")
+    expectEqual(Format.relative(now.addingTimeInterval(-70), now: now), "1m ago")
+    expectEqual(Format.relative(now.addingTimeInterval(-600), now: now), "10m ago")
+    expectEqual(Format.relative(now.addingTimeInterval(-7200), now: now), "2h ago")
+    expectEqual(Format.relative(now.addingTimeInterval(-172800), now: now), "2d ago")
+    expectEqual(Format.relative(now.addingTimeInterval(60), now: now), "just now", "a clock skew must not print a negative age")
+}
+
+// MARK: - Presentation
+
+func statusFor(_ name: String, _ state: ShareState, path: String? = nil,
+               capacity: VolumeCapacity? = nil) -> ShareStatus {
+    var st = ShareStatus(config: makeShare(name))
+    st.state = state
+    st.mountPath = path
+    st.capacity = capacity
+    return st
+}
+
+h.test("presentation: sections are ordered worst first") {
+    let shares = [
+        statusFor("A", .healthy),
+        statusFor("B", .stale),
+        statusFor("C", .unmounted),
+        statusFor("D", .paused),
+        statusFor("E", .healthy),
+    ]
+    let groups = Presentation.groups(shares)
+    expectEqual(groups.map { $0.name }, ["Needs attention", "Not mounted", "Healthy", "Paused"])
+    expectEqual(groups.first?.shares.map { $0.name }, ["B"])
+    expectEqual(groups.last?.shares.map { $0.name }, ["D"])
+    // Shares keep their configured order inside a section.
+    expectEqual(groups[2].shares.map { $0.name }, ["A", "E"])
+}
+
+h.test("presentation: failed and stale share one heading, mounting and unmounting another") {
+    expectEqual(Presentation.groupName(for: .failed), Presentation.groupName(for: .stale))
+    expectEqual(Presentation.groupName(for: .mounting), Presentation.groupName(for: .unmounting))
+    expectEqual(Presentation.groupName(for: .healthy), "Healthy")
+}
+
+h.test("presentation: ordered() flattens the sections, worst first") {
+    let shares = [
+        statusFor("A", .healthy),
+        statusFor("B", .stale),
+        statusFor("C", .unmounted),
+        statusFor("D", .paused),
+        statusFor("E", .healthy),
+    ]
+    // Same order the sections gave, with the headings gone.
+    expectEqual(Presentation.ordered(shares).map { $0.name }, ["B", "C", "A", "E", "D"])
+    expectEqual(Presentation.ordered(shares).count, shares.count, "nothing is dropped")
+    expectEqual(Presentation.ordered([]).count, 0)
+    // The flat order agrees with the grouped one it is built from.
+    expectEqual(Presentation.ordered(shares).map { $0.name },
+                Presentation.groups(shares).flatMap { $0.shares.map { $0.name } })
+}
+
+h.test("presentation: search matches name, share, and server") {
+    var share = ShareStatus(config: ShareConfig(name: "Photos", server: "nas.test", share: "Pictures", user: "tester"))
+    share.state = .healthy
+    expect(Presentation.matches(share, query: ""))
+    expect(Presentation.matches(share, query: "pho"), "by name")
+    expect(Presentation.matches(share, query: "PICT"), "by share, case-insensitive")
+    expect(Presentation.matches(share, query: "nas"), "by server")
+    expect(Presentation.matches(share, query: "  pho  "), "query is trimmed")
+    expect(!Presentation.matches(share, query: "zzz"))
+    expectEqual(Presentation.groups([share], matching: "zzz").count, 0, "filtered out entirely")
+}
+
+h.test("presentation: free space counts each volume once") {
+    let cap = VolumeCapacity(totalBytes: 10_000_000_000, freeBytes: 4_000_000_000)
+    let other = VolumeCapacity(totalBytes: 2_000_000_000, freeBytes: 1_000_000_000)
+    // Two shares on the same mount point must not double-count.
+    let same = [statusFor("A", .healthy, path: "/Volumes/X", capacity: cap),
+                statusFor("B", .healthy, path: "/Volumes/X", capacity: cap)]
+    expectEqual(Presentation.freeBytes(same), 4_000_000_000)
+    let distinct = same + [statusFor("C", .healthy, path: "/Volumes/Y", capacity: other)]
+    expectEqual(Presentation.freeBytes(distinct), 5_000_000_000)
+    expectNil(Presentation.freeBytes([statusFor("D", .unmounted)]), "nothing mounted, nothing to report")
+}
+
+h.test("presentation: footer counts shares and answering shares") {
+    let cap = VolumeCapacity(totalBytes: 10_000_000_000, freeBytes: 7_400_000_000_000)
+    let shares = [statusFor("A", .healthy, path: "/Volumes/A", capacity: cap),
+                  statusFor("B", .stale),
+                  statusFor("C", .paused)]
+    let summary = Presentation.footerSummary(shares)
+    expect(summary.contains("3 shares"), summary)
+    expect(summary.contains("1 of 2 answering"), summary)
+    expect(summary.contains("7.4 TB free"), summary)
+    expectEqual(Presentation.footerSummary([]), "0 shares")
+    expect(Presentation.footerSummary([statusFor("A", .healthy)]).contains("1 share "), "singular")
+}
+
+h.test("presentation: the header dot reports the worst thing happening") {
+    expectEqual(Presentation.headline([statusFor("A", .healthy)], paused: false).text, "All mounted")
+    expect(Presentation.headline([statusFor("A", .healthy)], paused: false).healthy)
+    expectEqual(Presentation.headline([statusFor("A", .healthy), statusFor("B", .stale)], paused: false).text, "Needs attention")
+    expect(!Presentation.headline([statusFor("A", .healthy), statusFor("B", .stale)], paused: false).healthy)
+    expectEqual(Presentation.headline([statusFor("A", .unreachable)], paused: false).text, "Unreachable")
+    expectEqual(Presentation.headline([statusFor("A", .mounting)], paused: false).text, "Working")
+    expectEqual(Presentation.headline([statusFor("A", .healthy)], paused: true).text, "Paused")
+    expectEqual(Presentation.headline([], paused: false).text, "No shares")
+    // A paused share alone must not read as healthy.
+    expect(!Presentation.headline([statusFor("A", .paused)], paused: false).healthy)
+}
+
+// MARK: - Capacity
+
+h.test("capacity: reads real numbers for the root volume") {
+    guard let cap = Prober.capacity(path: "/", timeout: 5) else {
+        expect(false, "no capacity for /")
+        return
+    }
+    expect(cap.totalBytes > 1_000_000_000, "total \(cap.totalBytes)")
+    expect(cap.freeBytes <= cap.totalBytes)
+    expectEqual(cap.usedBytes, cap.totalBytes - cap.freeBytes)
+    if let used = cap.usedFraction { expect(used >= 0 && used <= 1, "fraction \(used)") }
+    expectNil(Prober.capacity(path: "/definitely/not/here", timeout: 5))
+}
+
+h.test("capacity: a share that answers records its capacity") {
+    let sys = FakeSystem()
+    sys.table = [sys.entry(share: "Alpha")]
+    sys.capacityByPath["/Volumes/Alpha"] = VolumeCapacity(totalBytes: 1_000, freeBytes: 400)
+    let c = ShareController(config: makeShare("Alpha"), settings: testSettings(), system: sys, log: quietLog)
+    c.evaluateSync(reason: "test")
+    expectEqual(c.currentStatus.capacity, VolumeCapacity(totalBytes: 1_000, freeBytes: 400))
+    expect(sys.calls.contains("capacity /Volumes/Alpha"), "the live adapter is asked, not the protocol default: \(sys.calls)")
+}
+
+h.test("capacity: a share that stops answering keeps its last known capacity") {
+    let sys = FakeSystem()
+    sys.table = [sys.entry(share: "Alpha")]
+    sys.capacityByPath["/Volumes/Alpha"] = VolumeCapacity(totalBytes: 1_000, freeBytes: 400)
+    let c = ShareController(config: makeShare("Alpha"), settings: testSettings(), system: sys, log: quietLog)
+    c.evaluateSync(reason: "1")
+    sys.probeResults["/Volumes/Alpha"] = .hung
+    c.evaluateSync(reason: "2")
+    expectEqual(c.currentStatus.state, .stale)
+    expectEqual(c.currentStatus.capacity?.freeBytes, 400, "stale rows still show the last figure")
 }
 
 // MARK: - Share browser

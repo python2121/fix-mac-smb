@@ -3,13 +3,22 @@ import SMBKeeperCore
 
 /// Menu bar front end. The engine runs inside this process, so the app is the
 /// daemon: launchd starts it at login and keeps it alive.
+///
+/// Left-clicking the status item opens the panel; right-clicking gives a plain
+/// menu, which is the reliable path if the panel itself ever misbehaves.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var engine: Engine!
-    private let menu = NSMenu()
+    private var store: ShareStore!
+    private var panel: PanelController!
     private var refreshTimer: Timer?
     private var lastIconKey = ""
     private var addShareWindow: AddShareWindowController?
+
+    // Top-level code is nonisolated, so the delegate has to be constructible
+    // from there even though everything else about it is main-actor bound.
+    nonisolated override init() { super.init() }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -41,32 +50,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let lvl = LogLevel(name: config.settings.logLevel) { Log.shared.minLevel = lvl }
 
         engine = Engine(config: config, log: Log.shared)
-        engine.onStatusChange = { [weak self] _ in
-            DispatchQueue.main.async { self?.refreshIcon() }
-        }
+        store = ShareStore(engine: engine)
         engine.start()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.imagePosition = .imageOnly
-        menu.delegate = self
-        statusItem.menu = menu
-        refreshIcon()
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in self?.refreshIcon() }
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(togglePanel(_:))
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
-        // Debugging aid: open the Add Share panel at launch and log its
-        // geometry, so its layout can be checked without clicking the menu.
-        if CommandLine.arguments.contains("--dump-menu") {
-            menuNeedsUpdate(menu)
-            let titles = menu.items.map { item -> String in
-                let sub = item.submenu.map { " {" + $0.items.map { $0.isSeparatorItem ? "--" : $0.title }.joined(separator: " | ") + "}" } ?? ""
-                return (item.isSeparatorItem ? "--" : item.title) + sub
+        panel = PanelController(store: store, statusItem: statusItem, actions: panelActions())
+
+        refreshIcon()
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshIcon() }
+        }
+
+        // Debugging aids, for checking layout without clicking the menu bar.
+        if CommandLine.arguments.contains("--show-panel") {
+            panel.open()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+                MainActor.assumeIsolated {
+                    Log.shared.info("app", "panel layout: \(self?.panel.layoutReport() ?? "none")")
+                }
             }
-            Log.shared.info("app", "menu: " + titles.joined(separator: " / "))
+        }
+        if let idx = CommandLine.arguments.firstIndex(of: "--snapshot"),
+           idx + 1 < CommandLine.arguments.count {
+            let path = CommandLine.arguments[idx + 1]
+            panel.open()
+            if CommandLine.arguments.contains("--expand") {
+                for share in store.shares { store.toggleExpanded(share.name) }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                MainActor.assumeIsolated {
+                    let ok = self?.panel.snapshot(to: path) ?? false
+                    Log.shared.info("app", "snapshot to \(path): \(ok ? "written" : "failed")")
+                    NSApp.terminate(nil)
+                }
+            }
         }
         if CommandLine.arguments.contains("--show-add-share") {
-            addShare(nil)
+            showAddShare()
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                Log.shared.info("app", "add-share layout: \(self?.addShareWindow?.layoutReport() ?? "none")")
+                MainActor.assumeIsolated {
+                    Log.shared.info("app", "add-share layout: \(self?.addShareWindow?.layoutReport() ?? "none")")
+                }
             }
         }
     }
@@ -75,7 +104,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         engine?.stop()
     }
 
-    // MARK: Icon
+    private func panelActions() -> PanelActions {
+        PanelActions(
+            addShare: { [weak self] in self?.showAddShare() },
+            removeShare: { [weak self] name in self?.confirmRemove(name) },
+            toggleLoginItem: { [weak self] in self?.toggleLoginItem() },
+            isLoginItem: { LaunchAgent.isInstalled },
+            quit: { NSApp.terminate(nil) }
+        )
+    }
+
+    // MARK: Status item
 
     private func symbol(_ name: String, fallback: String) -> NSImage? {
         let img = NSImage(systemSymbolName: name, accessibilityDescription: "SMB Keeper")
@@ -116,116 +155,87 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         button.toolTip = tip
     }
 
-    // MARK: Menu
+    // MARK: Panel and menu
 
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        menu.removeAllItems()
-        let st = engine.status
-
-        if st.shares.isEmpty {
-            let none = NSMenuItem(title: "No shares configured — run `smbkeeper add`", action: nil, keyEquivalent: "")
-            none.isEnabled = false
-            menu.addItem(none)
+    @objc private func togglePanel(_ sender: Any?) {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu()
+            return
         }
-        for share in st.shares {
-            let item = NSMenuItem(title: "\(glyph(for: share.state)) \(share.name)  ·  \(share.state.rawValue)", action: nil, keyEquivalent: "")
-            // No tooltip: the submenu already opens with this same detail line,
-            // and a hover tip that repeats it just gets in the way.
-            let sub = NSMenu()
-            let detail = NSMenuItem(title: share.detail, action: nil, keyEquivalent: "")
-            detail.isEnabled = false
-            sub.addItem(detail)
-            if let err = share.lastError, share.state != .healthy {
-                let e = NSMenuItem(title: "Last error: \(err)", action: nil, keyEquivalent: "")
-                e.isEnabled = false
-                sub.addItem(e)
-            }
-            sub.addItem(.separator())
-            sub.addItem(action("Mount Now", #selector(mountNow(_:)), share.name))
-            sub.addItem(action("Unmount", #selector(unmountNow(_:)), share.name))
-            sub.addItem(action("Force Unmount", #selector(forceUnmountNow(_:)), share.name))
-            if let path = share.mountPath, share.state == .healthy {
-                sub.addItem(action("Reveal in Finder", #selector(reveal(_:)), path))
-            }
-            sub.addItem(.separator())
-            let eject = action("Eject Before Sleep", #selector(toggleEject(_:)), share.name)
-            eject.state = (engine.config.share(named: share.name)?.ejectOnSleep ?? false) ? .on : .off
-            sub.addItem(eject)
-            sub.addItem(.separator())
-            sub.addItem(action("Stop Monitoring This Share…", #selector(removeShare(_:)), share.name))
-            item.submenu = sub
-            menu.addItem(item)
-        }
-
-        menu.addItem(.separator())
-        menu.addItem(action("Add Share…", #selector(addShare(_:)), nil))
-        menu.addItem(action("Check All Now", #selector(checkAll(_:)), nil))
-        menu.addItem(action(st.paused ? "Resume" : "Pause", #selector(togglePause(_:)), nil))
-        menu.addItem(.separator())
-        let login = action("Start at Login", #selector(toggleLogin(_:)), nil)
-        login.state = LaunchAgent.isInstalled ? .on : .off
-        menu.addItem(login)
-        menu.addItem(action("Open Log", #selector(openLog(_:)), nil))
-        menu.addItem(.separator())
-        menu.addItem(action("Quit SMB Keeper", #selector(quit(_:)), nil))
+        panel.toggle()
     }
 
-    private func glyph(for s: ShareState) -> String {
-        switch s {
-        case .healthy: return "🟢"
-        case .stale, .failed: return "🔴"
-        case .mounting, .unmounting: return "🟡"
-        case .unreachable, .unmounted: return "⚪️"
-        case .paused, .unknown: return "⚫️"
-        }
+    /// Right-click on the status item: a native menu, assigned only for the
+    /// duration of the click so it cannot hijack left-clicks.
+    private func showContextMenu() {
+        panel.close()
+
+        let menu = NSMenu()
+        menu.addItem(item("Show shares", #selector(menuShowPanel(_:))))
+        menu.addItem(.separator())
+        menu.addItem(item("Add share…", #selector(menuAddShare(_:))))
+        menu.addItem(item("Check all now", #selector(menuCheckAll(_:))))
+        menu.addItem(item(engine.paused ? "Resume watching" : "Pause watching", #selector(menuTogglePause(_:))))
+        menu.addItem(.separator())
+        menu.addItem(item("Open log", #selector(menuOpenLog(_:))))
+        menu.addItem(item(LaunchAgent.isInstalled ? "Don't start at login" : "Start at login",
+                          #selector(menuToggleLogin(_:))))
+        menu.addItem(.separator())
+        // A local selector rather than NSApplication.terminate(_:): macOS
+        // auto-decorates well-known selectors with a system icon and a Cmd-Q
+        // hint, and neither is wanted here.
+        menu.addItem(item("Quit SMB Keeper", #selector(menuQuit(_:))))
+        menu.delegate = self
+
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
     }
 
-    private func action(_ title: String, _ sel: Selector, _ payload: String?) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: sel, keyEquivalent: "")
-        item.target = self
-        item.representedObject = payload
-        return item
+    func menuDidClose(_ menu: NSMenu) {
+        statusItem.menu = nil
     }
+
+    private func item(_ title: String, _ action: Selector) -> NSMenuItem {
+        let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+        entry.target = self
+        return entry
+    }
+
+    @objc private func menuShowPanel(_ sender: Any?) { panel.open() }
+    @objc private func menuAddShare(_ sender: Any?) { showAddShare() }
+    @objc private func menuCheckAll(_ sender: Any?) { store.checkAll() }
+    @objc private func menuTogglePause(_ sender: Any?) { engine.setPaused(!engine.paused) }
+    @objc private func menuOpenLog(_ sender: Any?) { store.openLog() }
+    @objc private func menuToggleLogin(_ sender: Any?) { toggleLoginItem() }
+    @objc private func menuQuit(_ sender: Any?) { NSApp.terminate(nil) }
 
     // MARK: Actions
 
-    @objc private func mountNow(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String, let c = engine.controller(named: name) else { return }
-        c.requestMount()
+    private func showAddShare() {
+        if addShareWindow == nil { addShareWindow = AddShareWindowController(engine: engine) }
+        addShareWindow?.show()
     }
 
-    @objc private func unmountNow(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String, let c = engine.controller(named: name) else { return }
-        c.requestUnmount(force: false)
-    }
-
-    @objc private func forceUnmountNow(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String, let c = engine.controller(named: name) else { return }
-        c.requestUnmount(force: true)
-    }
-
-    @objc private func reveal(_ sender: NSMenuItem) {
-        guard let path = sender.representedObject as? String else { return }
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
-    }
-
-    @objc private func toggleEject(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String else { return }
-        let current = engine.config.share(named: name)?.ejectOnSleep ?? false
-        engine.setEjectOnSleep(share: name, !current)
-    }
-
-    @objc private func checkAll(_ sender: Any?) {
-        for c in engine.shareControllers {
-            c.resetBackoff(reason: "menu")
-            c.releaseHold(reason: "menu check")
-            c.schedule(after: 0, reason: "menu check")
+    private func confirmRemove(_ name: String) {
+        guard let share = engine.config.share(named: name) else { return }
+        let a = NSAlert()
+        a.messageText = "Stop monitoring “\(name)”?"
+        a.informativeText = "SMB Keeper will no longer check or remount \(share.share) on \(share.server).\n\nThe volume itself is left alone: if it is mounted now, it stays mounted."
+        a.addButton(withTitle: "Stop Monitoring")
+        a.addButton(withTitle: "Cancel")
+        a.buttons.first?.hasDestructiveAction = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try store.removeShare(name)
+        } catch {
+            let message = (error as? Engine.ShareEditError)?.description ?? "\(error)"
+            alert("Could not stop monitoring “\(name)”", message)
         }
+        refreshIcon()
     }
 
-    @objc private func togglePause(_ sender: Any?) { engine.setPaused(!engine.paused) }
-
-    @objc private func toggleLogin(_ sender: Any?) {
+    private func toggleLoginItem() {
         if LaunchAgent.isInstalled {
             _ = LaunchAgent.uninstall()
             Log.shared.info("app", "launch agent removed; SMB Keeper will not start at login")
@@ -239,34 +249,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
     }
-
-    @objc private func addShare(_ sender: Any?) {
-        if addShareWindow == nil { addShareWindow = AddShareWindowController(engine: engine) }
-        addShareWindow?.show()
-    }
-
-    @objc private func removeShare(_ sender: NSMenuItem) {
-        guard let name = sender.representedObject as? String,
-              let share = engine.config.share(named: name) else { return }
-        let a = NSAlert()
-        a.messageText = "Stop monitoring “\(name)”?"
-        a.informativeText = "SMB Keeper will no longer check or remount \(share.share) on \(share.server).\n\nThe volume itself is left alone: if it is mounted now, it stays mounted."
-        a.addButton(withTitle: "Stop Monitoring")
-        a.addButton(withTitle: "Cancel")
-        a.buttons.first?.hasDestructiveAction = true
-        NSApp.activate(ignoringOtherApps: true)
-        guard a.runModal() == .alertFirstButtonReturn else { return }
-        do {
-            try engine.removeShare(named: name)
-        } catch {
-            let message = (error as? Engine.ShareEditError)?.description ?? "\(error)"
-            alert("Could not stop monitoring “\(name)”", message)
-        }
-        refreshIcon()
-    }
-
-    @objc private func openLog(_ sender: Any?) { NSWorkspace.shared.open(URL(fileURLWithPath: Paths.logFile)) }
-    @objc private func quit(_ sender: Any?) { NSApp.terminate(nil) }
 
     private func alert(_ title: String, _ text: String) {
         let a = NSAlert()

@@ -246,12 +246,14 @@ public final class ShareController {
             } else {
                 log.info(tag, "healthy: \(entry.on) (\(Int(ms)) ms)")
             }
+            let capacity = system.capacity(path: entry.on, timeout: s.probeTimeoutSeconds)
             update(.healthy, String(format: "mounted at %@ (%.0f ms)", entry.on, ms)) { st in
                 st.mountPath = entry.on
                 st.mountedFrom = entry.from
                 st.lastProbeLatencyMs = ms
                 st.lastHealthyAt = self.system.now()
                 st.lastError = nil
+                if let capacity = capacity { st.capacity = capacity }
             }
 
         case .hung, .failed:
