@@ -115,11 +115,6 @@ struct PanelView: View {
 
     private var footer: some View {
         HStack(spacing: 10) {
-            Text(store.footerSummary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
             Spacer(minLength: 4)
             footerButton("arrow.clockwise", help: "Check all now") { store.checkAll() }
             footerButton("doc.text", help: "Open log") { store.openLog() }

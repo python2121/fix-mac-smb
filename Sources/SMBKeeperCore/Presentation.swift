@@ -78,30 +78,33 @@ public enum Presentation {
         groups(shares, matching: query).flatMap { $0.shares }
     }
 
-    /// Distinct mounted volumes, so two shares on one volume are not counted
-    /// twice when adding up free space.
-    public static func freeBytes(_ shares: [ShareStatus]) -> UInt64? {
-        var seen = Set<String>()
-        var total: UInt64 = 0
-        var found = false
-        for share in shares {
-            guard let path = share.mountPath, let capacity = share.capacity else { continue }
-            if seen.contains(path) { continue }
-            seen.insert(path)
-            total += capacity.freeBytes
-            found = true
+    /// Whether a share currently has a volume attached. `failed` is a mount
+    /// attempt that did not happen, so it counts as not mounted; `stale` is a
+    /// mount that is present but not answering, so it counts as mounted.
+    public static func isMounted(_ state: ShareState) -> Bool {
+        switch state {
+        case .healthy, .stale, .unmounting: return true
+        case .unmounted, .unreachable, .failed, .mounting, .unknown, .paused: return false
         }
-        return found ? total : nil
     }
 
-    /// The footer line: how many of the watched shares are answering, and
-    /// nothing else. Counts and capacities are already on the rows themselves.
-    public static func footerSummary(_ shares: [ShareStatus]) -> String {
-        if shares.isEmpty { return "No shares" }
-        let watched = shares.filter { $0.state != .paused }
-        if watched.isEmpty { return "Paused" }
-        let healthy = watched.filter { $0.state == .healthy }.count
-        return "\(healthy) of \(watched.count) answering"
+    /// What the row's one action button offers.
+    public enum RowAction: Equatable {
+        case mount
+        case unmount
+        /// Offered once an unmount has been asked for and the volume is still
+        /// there, and for a mount that has stopped answering, which is the only
+        /// kind that needs forcing.
+        case forceUnmount
+    }
+
+    /// The button follows the volume, not the request: it offers to mount while
+    /// nothing is attached, to unmount once something is, and escalates to force
+    /// only while an unmount is outstanding or the mount has gone unresponsive.
+    public static func rowAction(state: ShareState, unmountRequested: Bool) -> RowAction {
+        guard isMounted(state) else { return .mount }
+        if unmountRequested || state == .unmounting || state == .stale { return .forceUnmount }
+        return .unmount
     }
 
     /// One-line state for the header: the dot's meaning.

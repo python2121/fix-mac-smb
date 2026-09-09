@@ -808,28 +808,35 @@ h.test("presentation: search matches name, share, and server") {
     expectEqual(Presentation.groups([share], matching: "zzz").count, 0, "filtered out entirely")
 }
 
-h.test("presentation: free space counts each volume once") {
-    let cap = VolumeCapacity(totalBytes: 10_000_000_000, freeBytes: 4_000_000_000)
-    let other = VolumeCapacity(totalBytes: 2_000_000_000, freeBytes: 1_000_000_000)
-    // Two shares on the same mount point must not double-count.
-    let same = [statusFor("A", .healthy, path: "/Volumes/X", capacity: cap),
-                statusFor("B", .healthy, path: "/Volumes/X", capacity: cap)]
-    expectEqual(Presentation.freeBytes(same), 4_000_000_000)
-    let distinct = same + [statusFor("C", .healthy, path: "/Volumes/Y", capacity: other)]
-    expectEqual(Presentation.freeBytes(distinct), 5_000_000_000)
-    expectNil(Presentation.freeBytes([statusFor("D", .unmounted)]), "nothing mounted, nothing to report")
+h.test("presentation: what counts as mounted") {
+    // A failed mount attempt never attached anything; a stale mount is present
+    // but not answering, which is precisely the case that needs forcing.
+    expect(Presentation.isMounted(.healthy))
+    expect(Presentation.isMounted(.stale))
+    expect(Presentation.isMounted(.unmounting))
+    expect(!Presentation.isMounted(.failed))
+    expect(!Presentation.isMounted(.unmounted))
+    expect(!Presentation.isMounted(.unreachable))
+    expect(!Presentation.isMounted(.mounting))
+    expect(!Presentation.isMounted(.unknown))
+    expect(!Presentation.isMounted(.paused))
 }
 
-h.test("presentation: the footer reports only how many are answering") {
-    let shares = [statusFor("A", .healthy, path: "/Volumes/A"),
-                  statusFor("B", .stale),
-                  statusFor("C", .paused)]
-    // Paused shares are not being watched, so they are not in the denominator.
-    expectEqual(Presentation.footerSummary(shares), "1 of 2 answering")
-    expectEqual(Presentation.footerSummary([statusFor("A", .healthy)]), "1 of 1 answering")
-    expectEqual(Presentation.footerSummary([]), "No shares")
-    expectEqual(Presentation.footerSummary([statusFor("A", .paused)]), "Paused",
-                "with everything paused there is nothing to answer")
+h.test("presentation: the row button follows the volume") {
+    // Nothing attached: offer to mount, whatever the reason.
+    for state in [ShareState.unmounted, .unreachable, .failed, .unknown, .paused, .mounting] {
+        expectEqual(Presentation.rowAction(state: state, unmountRequested: false), .mount, "\(state)")
+        expectEqual(Presentation.rowAction(state: state, unmountRequested: true), .mount,
+                    "a stale request cannot make a missing volume forceable: \(state)")
+    }
+    // Attached and answering: offer to unmount.
+    expectEqual(Presentation.rowAction(state: .healthy, unmountRequested: false), .unmount)
+    // Asked to unmount and the volume is still there: escalate.
+    expectEqual(Presentation.rowAction(state: .healthy, unmountRequested: true), .forceUnmount)
+    expectEqual(Presentation.rowAction(state: .unmounting, unmountRequested: false), .forceUnmount)
+    // A mount that has stopped answering needs forcing whether or not it was asked for.
+    expectEqual(Presentation.rowAction(state: .stale, unmountRequested: false), .forceUnmount)
+    expectEqual(Presentation.rowAction(state: .stale, unmountRequested: true), .forceUnmount)
 }
 
 h.test("presentation: the header dot reports the worst thing happening") {

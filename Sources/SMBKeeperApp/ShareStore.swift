@@ -13,7 +13,9 @@ final class ShareStore: ObservableObject {
     @Published private(set) var shares: [ShareStatus] = []
     @Published private(set) var paused = false
     @Published var selectedName: String?
-    @Published var expandedNames: Set<String> = []
+    /// Shares the user has asked to unmount that still have a volume attached.
+    /// The button escalates to force while a name is in here.
+    @Published private(set) var unmountRequested: Set<String> = []
     /// Set when keyboard navigation lands on a row that may be scrolled away.
     @Published private(set) var scrollTarget: String?
 
@@ -31,8 +33,13 @@ final class ShareStore: ObservableObject {
         shares = status.shares
         paused = status.paused
         let live = Set(status.shares.map { $0.name })
-        expandedNames.formIntersection(live)
         if let selected = selectedName, !live.contains(selected) { selectedName = nil }
+        // A request is satisfied the moment the volume is gone, and is dropped
+        // with the share itself.
+        unmountRequested = unmountRequested.filter { name in
+            guard let share = status.shares.first(where: { $0.name == name }) else { return false }
+            return Presentation.isMounted(share.state)
+        }
     }
 
     func refresh() { apply(engine.status) }
@@ -41,7 +48,6 @@ final class ShareStore: ObservableObject {
 
     /// Worst first, as one flat list.
     var orderedShares: [ShareStatus] { Presentation.ordered(shares) }
-    var footerSummary: String { Presentation.footerSummary(shares) }
     var headline: (text: String, healthy: Bool) { Presentation.headline(shares, paused: paused) }
 
     /// Every visible row, top to bottom, for keyboard navigation.
@@ -57,10 +63,6 @@ final class ShareStore: ObservableObject {
         selectedName = selectedName == name ? nil : name
     }
 
-    func toggleExpanded(_ name: String) {
-        if expandedNames.contains(name) { expandedNames.remove(name) } else { expandedNames.insert(name) }
-    }
-
     /// Move the highlight one row down (+1) or up (-1).
     func moveSelection(_ direction: Int) {
         let order = visualOrder
@@ -74,20 +76,6 @@ final class ShareStore: ObservableObject {
         guard next >= 0, next < order.count else { return }
         selectedName = order[next]
         scrollTarget = selectedName
-    }
-
-    /// Open (true) or close (false) the highlighted row. Returns whether there
-    /// was anything to act on, so the caller can hand the key back.
-    func setExpanded(_ expanded: Bool) -> Bool {
-        guard let name = selectedName else { return false }
-        if expanded {
-            if expandedNames.contains(name) { return false }
-            expandedNames.insert(name)
-        } else {
-            if !expandedNames.contains(name) { return false }
-            expandedNames.remove(name)
-        }
-        return true
     }
 
     func clearScrollTarget() { scrollTarget = nil }
@@ -118,8 +106,23 @@ final class ShareStore: ObservableObject {
         for c in engine.shareControllers { c.schedule(after: 0, reason: "panel opened") }
     }
 
-    func mount(_ name: String) { engine.controller(named: name)?.requestMount() }
-    func unmount(_ name: String) { engine.controller(named: name)?.requestUnmount(force: false) }
+    /// Which of the three the row's button offers for this share.
+    func rowAction(for share: ShareStatus) -> Presentation.RowAction {
+        Presentation.rowAction(state: share.state, unmountRequested: unmountRequested.contains(share.name))
+    }
+
+    func mount(_ name: String) {
+        unmountRequested.remove(name)
+        engine.controller(named: name)?.requestMount()
+    }
+
+    /// Ask for an unmount and remember that we did, so the button escalates to
+    /// force until the volume actually goes away.
+    func requestUnmount(_ name: String) {
+        unmountRequested.insert(name)
+        engine.controller(named: name)?.requestUnmount(force: false)
+    }
+
     func forceUnmount(_ name: String) { engine.controller(named: name)?.requestUnmount(force: true) }
 
     func setPaused(_ value: Bool) { engine.setPaused(value) }

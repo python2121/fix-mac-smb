@@ -79,9 +79,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
            idx + 1 < CommandLine.arguments.count {
             let path = CommandLine.arguments[idx + 1]
             panel.open()
-            if CommandLine.arguments.contains("--expand") {
-                for share in store.shares { store.toggleExpanded(share.name) }
-            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
                 MainActor.assumeIsolated {
                     let ok = self?.panel.snapshot(to: path) ?? false

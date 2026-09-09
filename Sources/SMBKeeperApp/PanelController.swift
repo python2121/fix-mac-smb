@@ -13,11 +13,6 @@ final class KeyablePanel: NSPanel {
     /// Invoked on Up (-1) / Down (+1) to walk the list.
     var onMove: ((_ direction: Int) -> Void)?
 
-    /// Invoked on Right (true) / Left (false) to open or close the highlighted
-    /// row. Returns whether it claimed the key: with nothing highlighted it
-    /// does not, and the arrow goes back to the search field's caret.
-    var onExpand: ((_ expand: Bool) -> Bool)?
-
     override var canBecomeKey: Bool { true }
 
     // Arrow keys drive the list, never the search field's caret. Intercepted in
@@ -31,15 +26,6 @@ final class KeyablePanel: NSPanel {
         if event.type == .keyDown, arrows.contains(event.keyCode),
            event.modifierFlags.intersection(claimed).isEmpty {
             onMove?(event.keyCode == 125 ? 1 : -1)
-            return
-        }
-        // Left and Right open and close the highlighted row, but only when
-        // there is one. They move the caret otherwise, so they are only
-        // borrowed when there is something to act on and handed back if not.
-        let sides: Set<UInt16> = [123, 124]    // left, right
-        if event.type == .keyDown, sides.contains(event.keyCode),
-           event.modifierFlags.intersection(claimed).isEmpty,
-           onExpand?(event.keyCode == 124) == true {
             return
         }
         super.sendEvent(event)
@@ -167,9 +153,6 @@ final class PanelController {
         }
         panel.onMove = { [weak self] direction in
             self?.store.moveSelection(direction)
-        }
-        panel.onExpand = { [weak self] expand in
-            self?.store.setExpanded(expand) ?? false
         }
     }
 
