@@ -19,7 +19,6 @@ public enum Paths {
     public static var appSupport: String { root + "/Library/Application Support/SMBKeeper" }
     public static var configFile: String { appSupport + "/config.json" }
     public static var statusFile: String { appSupport + "/status.json" }
-    public static var commandDir: String { appSupport + "/commands" }
     public static var logDir: String { root + "/Library/Logs/SMBKeeper" }
     public static var logFile: String { logDir + "/smbkeeper.log" }
     public static var launchAgentsDir: String { root + "/Library/LaunchAgents" }
@@ -28,7 +27,7 @@ public enum Paths {
     /// Create every directory the tool writes into. Safe to call repeatedly.
     public static func ensureDirectories() throws {
         let fm = FileManager.default
-        for dir in [appSupport, commandDir, logDir, launchAgentsDir] {
+        for dir in [appSupport, logDir, launchAgentsDir] {
             if !fm.fileExists(atPath: dir) {
                 try fm.createDirectory(atPath: dir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             }

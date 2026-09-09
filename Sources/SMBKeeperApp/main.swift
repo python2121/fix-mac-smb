@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SMBKeeperCore
 
 /// Menu bar front end. The engine runs inside this process, so the app is the
@@ -253,6 +254,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.informativeText = text
         a.runModal()
     }
+}
+
+// Register or remove the launch agent and exit, without starting the app.
+// `make install` calls these; they run before NSApplication so the
+// duplicate-instance check cannot put a modal alert in front of a build script.
+if CommandLine.arguments.contains("--install-agent") {
+    let exe = Bundle.main.executablePath ?? CommandLine.arguments[0]
+    do {
+        let path = try LaunchAgent.install(program: exe, arguments: [])
+        print("installed \(path)")
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(Data("install-agent failed: \(error.localizedDescription)\n".utf8))
+        exit(1)
+    }
+}
+if CommandLine.arguments.contains("--uninstall-agent") {
+    print(LaunchAgent.uninstall() ? "launch agent removed" : "no launch agent was installed")
+    exit(0)
 }
 
 let app = NSApplication.shared

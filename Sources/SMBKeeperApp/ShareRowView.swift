@@ -2,9 +2,9 @@ import AppKit
 import SwiftUI
 import SMBKeeperCore
 
-/// One share in the panel list, all of it on screen at once: a state badge, the
-/// share's name, how full the volume is, a bar of the same, where it is
-/// mounted, and the three buttons that act on it.
+/// One share in the panel list: a state badge, the share's name, one line
+/// saying where it is or what is wrong with it, and the buttons that act on it.
+/// Deliberately spare — this is a panel you should rarely need to open.
 struct ShareRowView: View {
     @ObservedObject var store: ShareStore
     let share: ShareStatus
@@ -13,35 +13,30 @@ struct ShareRowView: View {
     @State private var hovering = false
 
     private var isSelected: Bool { store.selectedName == share.name }
-    private var tint: Color { StateStyle.color(for: share.state) }
     private var action: Presentation.RowAction { store.rowAction(for: share) }
 
     var body: some View {
         HStack(spacing: 8) {
             StateBadge(state: share.state)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text(share.name)
                     .font(.system(size: 12))
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(subtitle)
+                Text(secondaryLine)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                ProgressGauge(fraction: gaugeFraction, color: tint)
-                if let path = share.mountPath {
-                    Text(path)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                        // A path's useful end is its last component, so drop
-                        // characters from the front rather than the middle.
-                        .truncationMode(.head)
-                        .textSelection(.enabled)
-                        .help(path)
-                }
+                    // A path's useful end is its last component, so drop
+                    // characters from the front rather than the middle.
+                    .truncationMode(secondaryLine.hasPrefix("/") ? .head : .middle)
+                    .textSelection(.enabled)
+                    .help(secondaryLine)
             }
+            // The bar used to stretch and push these to the trailing edge.
+            // With it gone nothing else expands, so say so explicitly, or the
+            // buttons hug the text and sit at a different x on every row.
+            Spacer(minLength: 8)
             HStack(spacing: 2) {
                 primaryAction
                 if store.canReveal(share.name) { revealButton }
@@ -65,25 +60,11 @@ struct ShareRowView: View {
         return hovering ? 0.14 : 0
     }
 
-    /// How full the volume is when it is answering, otherwise whatever the
-    /// engine last said about it.
-    private var subtitle: String {
-        guard share.state == .healthy else { return share.detail }
-        if let capacity = share.capacity, capacity.totalBytes > 0 {
-            return "\(Format.bytes(capacity.freeBytes)) free of \(Format.bytes(capacity.totalBytes))"
-        }
-        return share.state.rawValue.capitalized
-    }
-
-    /// How full the volume is; a full bar for a healthy share with no figure,
-    /// and an empty one for anything not answering.
-    private var gaugeFraction: Double {
-        if let used = share.capacity?.usedFraction, share.state == .healthy { return used }
-        switch share.state {
-        case .healthy: return 1
-        case .mounting, .unmounting: return 0.5
-        default: return 0
-        }
+    /// Where it is when all is well, what is wrong with it otherwise. A share
+    /// that is working needs no commentary beyond its mount point.
+    private var secondaryLine: String {
+        if share.state == .healthy, let path = share.mountPath { return path }
+        return share.detail
     }
 
     // MARK: Buttons

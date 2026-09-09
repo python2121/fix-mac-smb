@@ -256,7 +256,7 @@ public enum ConfigError: Error, CustomStringConvertible {
 
     public var description: String {
         switch self {
-        case .missing(let p): return "no configuration at \(p) (run `smbkeeper add` first)"
+        case .missing(let p): return "no configuration at \(p) (add a share from the menu bar)"
         case .invalid(let m): return "invalid configuration: \(m)"
         }
     }

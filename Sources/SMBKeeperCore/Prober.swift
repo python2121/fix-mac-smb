@@ -20,25 +20,6 @@ public enum ProbeResult: Equatable {
     }
 }
 
-/// How full a mounted volume is. Read from the same `statfs` the probe uses.
-public struct VolumeCapacity: Equatable, Codable {
-    public let totalBytes: UInt64
-    public let freeBytes: UInt64
-
-    public init(totalBytes: UInt64, freeBytes: UInt64) {
-        self.totalBytes = totalBytes
-        self.freeBytes = freeBytes
-    }
-
-    public var usedBytes: UInt64 { totalBytes > freeBytes ? totalBytes - freeBytes : 0 }
-
-    /// 0-1, or nil when the server reports no size (some shares do).
-    public var usedFraction: Double? {
-        guard totalBytes > 0 else { return nil }
-        return min(1, max(0, Double(usedBytes) / Double(totalBytes)))
-    }
-}
-
 public enum Prober {
     /// Paths whose probe thread is still stuck inside the kernel.
     ///
@@ -59,22 +40,6 @@ public enum Prober {
     public static func stuckSince(_ path: String) -> Date? {
         lock.lock(); defer { lock.unlock() }
         return inFlight[path]
-    }
-
-    /// Size and free space of a mounted volume, with a hard deadline.
-    ///
-    /// Called right after a healthy probe, so the mount has just proved it
-    /// answers; the deadline is there for the case where it stops answering
-    /// between the two calls.
-    public static func capacity(path: String, timeout: Double) -> VolumeCapacity? {
-        let result: VolumeCapacity?? = Deadline.run(seconds: timeout, name: "capacity") { () -> VolumeCapacity? in
-            var st = statfs()
-            guard statfs(path, &st) == 0, st.f_blocks > 0 else { return nil }
-            let block = UInt64(st.f_bsize)
-            return VolumeCapacity(totalBytes: UInt64(st.f_blocks) * block,
-                                  freeBytes: UInt64(st.f_bavail) * block)
-        }
-        return result ?? nil
     }
 
     /// Probe a mounted volume with a hard deadline.

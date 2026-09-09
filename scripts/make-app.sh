@@ -15,13 +15,11 @@ VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo 0.1.0)"
 
 cd "$ROOT"
 swift build -c release --product SMBKeeperApp
-swift build -c release --product smbkeeper
 BIN="$(swift build -c release --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/SMBKeeperApp" "$APP/Contents/MacOS/SMBKeeperApp"
-cp "$BIN/smbkeeper" "$APP/Contents/MacOS/smbkeeper"
 
 cat > "$APP/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -68,7 +66,6 @@ EOF
 
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-codesign --force --sign "$IDENTITY" --timestamp=none "$APP/Contents/MacOS/smbkeeper"
 codesign --force --sign "$IDENTITY" --timestamp=none "$APP"
 codesign --verify --deep --strict "$APP"
 echo "built: $APP"

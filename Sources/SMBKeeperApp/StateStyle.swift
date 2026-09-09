@@ -55,31 +55,3 @@ struct StateBadge: View {
         .frame(width: size, height: size)
     }
 }
-
-/// The slim state-coloured bar under each row's subtitle: 4pt tall over a
-/// 19%-alpha track, drawn in a Canvas so it costs one draw call per row.
-///
-/// For a mounted share the fill is how full the volume is. With no capacity
-/// figure it falls back to a full bar when the share is healthy and an empty
-/// one when it is not, so the bar always says something true at a glance.
-struct ProgressGauge: View {
-    /// 0-1, clamped on render.
-    let fraction: Double
-    let color: Color
-    var height: CGFloat = 4
-
-    var body: some View {
-        Canvas { context, size in
-            let radius = height / 2
-            let track = CGRect(x: 0, y: 0, width: size.width, height: height)
-            context.fill(Path(roundedRect: track, cornerRadius: radius),
-                         with: .color(color.opacity(0.19)))
-            let done = min(max(fraction, 0), 1)
-            if done > 0 {
-                let fill = CGRect(x: 0, y: 0, width: size.width * done, height: height)
-                context.fill(Path(roundedRect: fill, cornerRadius: radius), with: .color(color))
-            }
-        }
-        .frame(height: height)
-    }
-}

@@ -138,8 +138,8 @@ public final class ShareController {
         lock.unlock()
     }
 
-    /// Run a full evaluation synchronously on the calling thread. Only for tests
-    /// and one-shot CLI commands; the daemon uses `schedule`.
+    /// Run a full evaluation synchronously on the calling thread. Only for
+    /// tests; everything else goes through `schedule`.
     public func evaluateSync(reason: String) {
         queue.sync { self.evaluate(reason: reason) }
     }
@@ -171,7 +171,7 @@ public final class ShareController {
             switch r {
             case .unmounted:
                 self.lock.withLock { self.held = "unmounted by request"; self.staleSince = nil }
-                self.update(.unmounted, "unmounted by request; will remount on wake or `smbkeeper mount`") { st in
+                self.update(.unmounted, "unmounted by request; will remount on wake, or when you press mount") { st in
                     st.mountPath = nil; st.mountedFrom = nil
                 }
             default:
@@ -246,14 +246,12 @@ public final class ShareController {
             } else {
                 log.info(tag, "healthy: \(entry.on) (\(Int(ms)) ms)")
             }
-            let capacity = system.capacity(path: entry.on, timeout: s.probeTimeoutSeconds)
             update(.healthy, String(format: "mounted at %@ (%.0f ms)", entry.on, ms)) { st in
                 st.mountPath = entry.on
                 st.mountedFrom = entry.from
                 st.lastProbeLatencyMs = ms
                 st.lastHealthyAt = self.system.now()
                 st.lastError = nil
-                if let capacity = capacity { st.capacity = capacity }
             }
 
         case .hung, .failed:
@@ -351,10 +349,10 @@ public final class ShareController {
         // a dying session shows up as a hung probe first. Respect the eject.
         if previous.state == .healthy, previous.mountPath != nil {
             lock.withLock { held = "ejected outside SMB Keeper" }
-            log.info(tag, "\(previous.mountPath!) was ejected outside SMB Keeper; holding until wake or `smbkeeper mount`")
+            log.info(tag, "\(previous.mountPath!) was ejected outside SMB Keeper; holding until wake or a mount from the panel")
         }
         if let why = lock.withLock({ held }) {
-            update(.unmounted, "\(why); will remount on wake or `smbkeeper mount`") { st in
+            update(.unmounted, "\(why); will remount on wake, or when you press mount") { st in
                 st.mountPath = nil; st.mountedFrom = nil
             }
             return

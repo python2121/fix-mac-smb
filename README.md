@@ -4,11 +4,9 @@ Keeps SMB network volumes mounted and answering on macOS: after login, after
 sleep and wake, after Wi-Fi drops and returns, and when a mount is listed but
 hangs every program that touches it.
 
-It is a small Swift package with three parts that share one engine:
-
-- `smbkeeper`, a command line tool for setup, diagnostics, and control.
-- `SMB Keeper.app`, a menu bar app that runs the engine and shows each share's state.
-- A launchd agent so the app starts at login and is restarted if it ever exits.
+It is one menu bar app, `SMB Keeper.app`, plus a launchd agent so it starts at
+login and is restarted if it ever exits. Everything happens in the menu bar:
+there is no command line tool and nothing to configure by hand.
 
 No Xcode project is required. It builds with `swift build` and the tests are a
 plain executable, not XCTest.
@@ -56,96 +54,60 @@ the kernel reports the mount table changed.
 
 ```
 make            # debug build
-make test       # run the test harness (76 tests, no XCTest)
+make test       # run the test harness (72 tests, no XCTest)
 make app        # build/SMB Keeper.app, ad-hoc signed
-make install    # copy to ~/Applications, link CLI into ~/bin, start at login
-make uninstall  # remove the agent, app, and CLI link (config and logs stay)
+make install    # copy to ~/Applications and start at login
+make uninstall  # remove the agent and the app (config and logs stay)
 ```
 
 ## Setup
 
-```
-smbkeeper shares 10.0.0.20 --user you       # what does the server export?
-smbkeeper add --server 10.0.0.20 --share Projects --user you
-smbkeeper add --server 10.0.0.20 --share Archive --user you --eject-on-sleep
-smbkeeper doctor
-```
+Open the app, press + at the bottom of the panel, and fill in the server and
+your account. Press "Find Shares" to ask the server what it exports and pick
+one from the list, or type a share name if the server is not answering. Shares
+already being monitored are left out of the list.
 
-`add` prompts for the password once and stores it in the login keychain as an
-Internet Password item trusted for NetAuthAgent, exactly the shape Finder
-writes. If Finder already saved a password for that server name, `add` skips
-the prompt.
+A password is only needed the first time for a given server, and only if Finder
+has not already saved one. It is written to the login keychain as an Internet
+Password item trusted for NetAuthAgent, exactly the shape Finder writes, so
+macOS can mount silently from then on. The secret goes to `security` over a pipe
+rather than on a command line where other processes could read it.
 
-Prefer an IP address or a unicast DNS name for `--server`. If your Mac already
-has a keychain entry for a short host name that your router resolves, use that
-name and no password entry is needed at all.
-
-Then either `make install`, or run the pieces by hand:
-
-```
-smbkeeper daemon --verbose         # engine in the foreground
-open "build/SMB Keeper.app"        # menu bar app (also runs the engine)
-smbkeeper install-agent            # launchd runs the CLI daemon at login
-smbkeeper install-agent --app "$HOME/Applications/SMB Keeper.app"
-```
-
-Only one engine should run at a time. The second one notices the first and exits.
+Prefer an IP address or a unicast DNS name for the server. Bonjour names go
+stale across sleep, which is one of the failure modes this app exists to fix.
 
 ## Day-to-day
 
-```
-smbkeeper status                   # what the daemon sees
-smbkeeper log --follow             # tail the log
-smbkeeper check                    # re-check everything now
-smbkeeper mount Projects           # mount one share now
-smbkeeper unmount Projects --force # force-unmount one share
-smbkeeper pause / resume
-smbkeeper probe [name]             # one-shot evaluation without a daemon
-smbkeeper shares <server>          # list what a server exports
-smbkeeper doctor                   # mounts, reachability, keychain, knobs
-```
+There is nothing to do. The panel exists for when something looks wrong.
 
-Left-clicking the menu bar icon opens a panel; right-clicking gives a plain
-menu as a fallback. The icon itself shows a checkmark when every share is
-healthy, an exclamation mark when one is stale or failing, and an X when one is
-unmounted.
+Left-clicking the menu bar icon opens it; right-clicking gives a plain menu with
+the same essentials. The icon shows a checkmark when every share is healthy, an
+exclamation mark when one is stale or failing, and an X when one is unmounted.
 
-The panel lists every share worst first: anything needing attention is at the
-top, healthy shares below, paused ones last. Each row carries a state badge, the
-share's name, how full the volume is, a bar showing the same, an Eject button, a
-Reveal in Finder button, and a chevron. Opening a row adds unmount, force
-unmount and stop-monitoring buttons plus a six-field detail grid. The footer
-sums up the shares and free space and holds check-now, open-log, add-share and a
-settings menu.
+Shares are listed worst first: anything needing attention is at the top, healthy
+ones below, paused ones last. A row is a state badge, the share's name, where it
+is mounted or what is wrong with it, and three buttons. The first follows the
+volume: mount when nothing is attached, unmount when something is, and force
+once an unmount has been asked for and the volume is still there. Then reveal in
+Finder, and stop monitoring, which forgets the share and leaves the volume
+exactly as it is. The footer holds check-now, open-log, add-share and a settings
+menu.
 
-"Add share" opens a panel: type a server and account, optionally a password,
-then press "Find Shares" to ask the server what it exports and pick one from
-the list. Shares already being monitored are left out of that list, and you can
-type a share name directly if the server is not answering. A typed password is
-written to the login keychain through the same kind of item Finder creates, so
-macOS can mount silently afterwards; the secret is passed to `security` over a
-pipe rather than on a command line where other processes could read it.
-
-Stop monitoring forgets a share and leaves the volume exactly as it is, mounted
-or not. Ejecting before sleep is a per-share setting the CLI can toggle with
-`smbkeeper set <name> eject-on-sleep on|off`.
-
-The configuration file is edited by the app and the CLI, so there is no menu
-item for opening or reloading it. `smbkeeper` changes take effect immediately
-because the CLI tells the running app to re-read the file.
+Ejecting cleanly before sleep is a per-share setting, `ejectOnSleep` in
+`config.json`, off by default.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
 | `~/Library/Application Support/SMBKeeper/config.json` | shares and settings |
-| `~/Library/Application Support/SMBKeeper/status.json` | written by the daemon, read by `status` |
-| `~/Library/Application Support/SMBKeeper/commands/` | CLI to daemon commands |
+| `~/Library/Application Support/SMBKeeper/status.json` | what the panel is showing, and the single-instance guard |
 | `~/Library/Logs/SMBKeeper/smbkeeper.log` | rotating log (5 MB x 3) |
 | `~/Library/LaunchAgents/io.github.smbkeeper.plist` | launch agent |
 
-Every setting in `config.json` is optional and documented in
-`Sources/SMBKeeperCore/Config.swift`. The ones worth knowing:
+The app writes `config.json` itself. Every setting in it is optional and
+documented in `Sources/SMBKeeperCore/Config.swift`; edit it by hand only for one
+of the tunables below, and relaunch the app afterwards.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -159,7 +121,7 @@ Every setting in `config.json` is optional and documented in
 
 ## Recommended system changes
 
-These are outside the tool and optional; `smbkeeper doctor` reports them.
+These are outside the app and optional.
 
 - Remove the network volumes from System Settings > General > Login Items so
   Finder and SMB Keeper do not race each other at login.
@@ -176,20 +138,15 @@ These are outside the tool and optional; `smbkeeper doctor` reports them.
   at once has been reported to panic recent kernels.
 - The daemon ignores its timer while flagged asleep, but clears the flag if the
   user is typing, so a missed wake notification cannot strand it.
-- The CLI talks to the daemon with JSON files plus a Darwin notification. No
-  XPC, no sockets, and commands survive a daemon restart.
 - IOKit's power message constants do not import into Swift; they are spelled
   out in `PowerMonitor.swift` from the `iokit_common_msg` formula.
 
 ## First run
 
 After `make install`, macOS asks once whether SMB Keeper may access files on
-network volumes. Approve it. Until you do, every probe blocks and the menu
-shows each share as `stale` with "never answered since startup"; the tool
-deliberately does nothing else in that state, so nothing is unmounted. The
-`smbkeeper` command run from a terminal is unaffected, because it inherits the
-terminal's permissions, so `smbkeeper doctor` and `smbkeeper probe` work either
-way.
+network volumes. Approve it. Until you do, every probe blocks and every share
+reads `stale` with "never answered since startup". The app deliberately does
+nothing else in that state, so nothing is unmounted.
 
 ## Privacy permissions
 

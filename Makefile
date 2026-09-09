@@ -2,19 +2,17 @@
 #
 #   make            debug build
 #   make test       run the custom test harness (no XCTest)
-#   make release    optimised binaries in .build/release
+#   make release    optimised build in .build/release
 #   make app        assemble build/SMB Keeper.app (ad-hoc signed)
-#   make install    copy the app to ~/Applications, link the CLI into ~/bin,
-#                   and register the launch agent so it starts at login
-#   make uninstall  remove the launch agent, app, and CLI link (config and logs stay)
-#   make integration  live checks against the configured NAS (needs a config)
+#   make install    copy the app to ~/Applications and start it at login
+#   make uninstall  remove the launch agent and the app (config and logs stay)
 
 PREFIX ?= $(HOME)
 APPDIR ?= $(PREFIX)/Applications
-BINDIR ?= $(PREFIX)/bin
 APP     = build/SMB Keeper.app
+EXE     = $(APPDIR)/SMB Keeper.app/Contents/MacOS/SMBKeeperApp
 
-.PHONY: all build test release app install uninstall integration clean
+.PHONY: all build test release app install uninstall clean
 
 all: build
 
@@ -31,13 +29,10 @@ app:
 	scripts/make-app.sh build
 
 install: app
-	mkdir -p "$(APPDIR)" "$(BINDIR)"
+	mkdir -p "$(APPDIR)"
 	rm -rf "$(APPDIR)/SMB Keeper.app"
 	cp -R "$(APP)" "$(APPDIR)/"
-	ln -sf "$(APPDIR)/SMB Keeper.app/Contents/MacOS/smbkeeper" "$(BINDIR)/smbkeeper"
-	"$(BINDIR)/smbkeeper" install-agent --app "$(APPDIR)/SMB Keeper.app"
-	@echo ""
-	@echo "installed. Put $(BINDIR) on your PATH if it is not already."
+	"$(EXE)" --install-agent
 	@echo ""
 	@echo "NOTE: this build has a new ad-hoc code signature, so macOS treats it as"
 	@echo "a new app and asks again for access to network volumes. Approve the"
@@ -47,12 +42,8 @@ install: app
 	@echo "Developer ID to keep the identity, and the approval, stable."
 
 uninstall:
-	-"$(BINDIR)/smbkeeper" uninstall-agent
-	rm -f "$(BINDIR)/smbkeeper"
+	-"$(EXE)" --uninstall-agent
 	rm -rf "$(APPDIR)/SMB Keeper.app"
-
-integration: build
-	scripts/integration.sh
 
 clean:
 	rm -rf .build build

@@ -19,7 +19,6 @@ final class FakeSystem: SystemAdapter {
     var mountAddsEntry = true
     var clock = Date(timeIntervalSince1970: 1_700_000_000)
     var probeDelay: Double = 0
-    var capacityByPath: [String: VolumeCapacity] = [:]
 
     private(set) var calls: [String] = []
 
@@ -81,12 +80,6 @@ final class FakeSystem: SystemAdapter {
             return .mounted(paths: [on])
         }
         return mountResult
-    }
-
-    func capacity(path: String, timeout: Double) -> VolumeCapacity? {
-        record("capacity \(path)")
-        lock.lock(); defer { lock.unlock() }
-        return capacityByPath[path]
     }
 
     func now() -> Date { lock.lock(); defer { lock.unlock() }; return clock }

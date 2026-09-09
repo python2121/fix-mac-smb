@@ -1,6 +1,6 @@
 import Foundation
 
-/// Coarse state of one share, as shown in the menu and `smbkeeper status`.
+/// Coarse state of one share, as shown in the panel.
 public enum ShareState: String, Codable {
     /// Not evaluated yet.
     case unknown
@@ -31,8 +31,6 @@ public struct ShareStatus: Codable, Equatable {
     public var mountPath: String?
     public var mountedFrom: String?
     public var lastProbeLatencyMs: Double?
-    /// Size and free space, when the mount reported them.
-    public var capacity: VolumeCapacity?
     public var lastHealthyAt: Date?
     public var lastMountAt: Date?
     public var lastError: String?

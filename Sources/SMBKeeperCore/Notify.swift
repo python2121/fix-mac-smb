@@ -26,6 +26,4 @@ public final class DarwinNotification {
     /// Kernel-posted names for mount table changes.
     public static let vfsMount = "com.apple.system.kernel.mount"
     public static let vfsUnmount = "com.apple.system.kernel.unmount"
-    /// Posted by the CLI when it drops a command file for the daemon.
-    public static let command = Paths.bundleID + ".command"
 }

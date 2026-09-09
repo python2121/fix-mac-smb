@@ -1,16 +1,14 @@
 import Foundation
 
-/// Owns the share controllers and wires them to the triggers: a periodic
-/// tick, sleep/wake, network path changes, kernel mount-table changes, and
-/// commands from the CLI. One engine runs per user session, inside either the
-/// menu bar app or `smbkeeper daemon`.
+/// Owns the share controllers and wires them to the triggers: a periodic tick,
+/// sleep/wake, network path changes, and kernel mount-table changes. One engine
+/// runs per user session, inside the menu bar app.
 public final class Engine {
     public private(set) var config: Config
     public let log: Log
     private let system: SystemAdapter
     private let configPath: String
     private let statusPath: String
-    private let commandDir: String
 
     private let lock = NSLock()
     private var controllers: [ShareController] = []
@@ -25,7 +23,6 @@ public final class Engine {
     private var network: NetworkMonitor?
     private var vfsMount: DarwinNotification?
     private var vfsUnmount: DarwinNotification?
-    private var commandNote: DarwinNotification?
     private var statusWrite: DispatchWorkItem?
     private var running = false
 
@@ -33,14 +30,12 @@ public final class Engine {
     public var onStatusChange: ((EngineStatus) -> Void)?
 
     public init(config: Config, log: Log, system: SystemAdapter? = nil,
-                configPath: String = Paths.configFile, statusPath: String = Paths.statusFile,
-                commandDir: String = Paths.commandDir) {
+                configPath: String = Paths.configFile, statusPath: String = Paths.statusFile) {
         self.config = config
         self.log = log
         self.system = system ?? LiveSystem(log: log)
         self.configPath = configPath
         self.statusPath = statusPath
-        self.commandDir = commandDir
         rebuildControllers()
     }
 
@@ -90,11 +85,6 @@ public final class Engine {
             self?.log.debug("engine", "kernel: mount table changed (unmount)")
             self?.scheduleAll(after: 1.5, reason: "mount table changed")
         }
-        commandNote = DarwinNotification(name: DarwinNotification.command, queue: timerQueue) { [weak self] in
-            self?.drainCommands()
-        }
-
-        drainCommands()
         // Give Finder's own login-item mounts a head start so we never race
         // them into a duplicate "<share>-1" mount.
         scheduleAll(after: config.settings.settleAfterStartupSeconds, reason: "startup")
@@ -106,7 +96,7 @@ public final class Engine {
         tick?.cancel(); tick = nil
         power?.stop(); power = nil
         network?.stop(); network = nil
-        vfsMount = nil; vfsUnmount = nil; commandNote = nil
+        vfsMount = nil; vfsUnmount = nil
         log.info("engine", "stopped")
     }
 
@@ -268,7 +258,6 @@ public final class Engine {
                 return
             }
         }
-        drainCommands()
         scheduleAll(after: 0, reason: "tick")
         writeStatusSoon()
     }
@@ -325,44 +314,6 @@ public final class Engine {
         if snap.satisfied {
             for c in shareControllers { c.resetBackoff(reason: "network change") }
             scheduleAll(after: config.settings.settleAfterNetworkSeconds, reason: "network change")
-        }
-    }
-
-    private func drainCommands() {
-        for cmd in CommandQueue.drain(dir: commandDir) {
-            log.info("engine", "command: \(cmd.kind.rawValue)\(cmd.share.map { " \($0)" } ?? "")\(cmd.argument.map { " \($0)" } ?? "")")
-            handle(cmd)
-        }
-    }
-
-    private func handle(_ cmd: Command) {
-        func targets() -> [ShareController] {
-            if let name = cmd.share {
-                if let c = controller(named: name) { return [c] }
-                log.warn("engine", "no share named '\(name)'")
-                return []
-            }
-            return shareControllers
-        }
-        switch cmd.kind {
-        case .evaluate:
-            for c in targets() {
-                c.resetBackoff(reason: "manual check")
-                c.releaseHold(reason: "manual check")
-                c.schedule(after: 0, reason: "manual check")
-            }
-        case .mount:
-            for c in targets() { c.requestMount() }
-        case .unmount:
-            for c in targets() { c.requestUnmount(force: false) }
-        case .forceUnmount:
-            for c in targets() { c.requestUnmount(force: true) }
-        case .pause:
-            setPaused(true)
-        case .resume:
-            setPaused(false)
-        case .reload:
-            reload()
         }
     }
 

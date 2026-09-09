@@ -5,7 +5,6 @@ let package = Package(
     name: "SMBKeeper",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "smbkeeper", targets: ["smbkeeper"]),
         .executable(name: "SMBKeeperApp", targets: ["SMBKeeperApp"]),
         .executable(name: "smbkeeper-tests", targets: ["smbkeeper-tests"]),
         .library(name: "SMBKeeperCore", targets: ["SMBKeeperCore"]),
@@ -21,7 +20,6 @@ let package = Package(
                 .linkedFramework("CoreGraphics"),
             ]
         ),
-        .executableTarget(name: "smbkeeper", dependencies: ["SMBKeeperCore"]),
         .executableTarget(
             name: "SMBKeeperApp",
             dependencies: ["SMBKeeperCore"],

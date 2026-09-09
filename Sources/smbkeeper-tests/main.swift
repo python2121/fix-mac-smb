@@ -292,25 +292,6 @@ h.test("status: round trip through file") {
     expectNil(EngineStatus.read(from: testHome + "/missing.json"))
 }
 
-h.test("commands: send and drain in order, stale ones dropped") {
-    let dir = testHome + "/commands"
-    _ = try CommandQueue.send(Command(kind: .mount, share: "A"), dir: dir)
-    Thread.sleep(forTimeInterval: 0.01)
-    _ = try CommandQueue.send(Command(kind: .reload), dir: dir)
-    var stale = Command(kind: .pause)
-    stale.issuedAt = Date().addingTimeInterval(-3600)
-    let enc = JSONEncoder(); enc.dateEncodingStrategy = .iso8601
-    try enc.encode(stale).write(to: URL(fileURLWithPath: dir + "/0000-stale.json"))
-    try "garbage".write(toFile: dir + "/0001-bad.json", atomically: true, encoding: .utf8)
-    let got = CommandQueue.drain(dir: dir)
-    expectEqual(got.map { $0.kind }, [.mount, .reload])
-    expectEqual(got.first?.share, "A")
-    expectEqual(CommandQueue.drain(dir: dir).count, 0, "drained files are deleted")
-    expectEqual(try FileManager.default.contentsOfDirectory(atPath: dir).count, 0)
-}
-
-// MARK: - Launch agent plist
-
 h.test("launch agent: plist is well-formed and escapes arguments") {
     let text = LaunchAgent.plist(program: "/Applications/SMB Keeper.app/Contents/MacOS/SMBKeeperApp", arguments: ["a&b"])
     let data = text.data(using: .utf8)!
@@ -676,8 +657,7 @@ h.test("controller: manual mount of an already mounted share just probes it") {
     let c = ShareController(config: makeShare("Alpha"), settings: testSettings(), system: sys, log: quietLog)
     c.requestMount()
     expect(waitUntil(3) { c.currentStatus.state == .healthy })
-    expectEqual(sys.calls, ["probe /Volumes/Alpha", "capacity /Volumes/Alpha"],
-                "a healthy probe is followed by the capacity read")
+    expectEqual(sys.calls, ["probe /Volumes/Alpha"], "a healthy mount is only probed")
     expectEqual(c.currentStatus.consecutiveFailures, 0)
 }
 
@@ -720,40 +700,12 @@ h.test("controller: status change callback fires on transitions") {
     expectEqual(seen, [.healthy, .stale])
 }
 
-// MARK: - Format
-
-h.test("format: byte sizes use decimal units") {
-    expectEqual(Format.bytes(UInt64(0)), "0 B")
-    expectEqual(Format.bytes(UInt64(512)), "512 B")
-    expectEqual(Format.bytes(UInt64(1_500)), "1.5 KB")
-    expectEqual(Format.bytes(UInt64(7_400_000_000_000)), "7.4 TB")
-    expectEqual(Format.bytes(UInt64(2_500_000_000_000_000)), "2.5 PB")
-}
-
-h.test("format: latency switches to seconds above a second") {
-    expectEqual(Format.latency(milliseconds: 30), "30 ms")
-    expectEqual(Format.latency(milliseconds: 999), "999 ms")
-    expectEqual(Format.latency(milliseconds: 1_500), "1.5 s")
-}
-
-h.test("format: relative time is coarse and never negative") {
-    let now = Date()
-    expectEqual(Format.relative(now, now: now), "just now")
-    expectEqual(Format.relative(now.addingTimeInterval(-70), now: now), "1m ago")
-    expectEqual(Format.relative(now.addingTimeInterval(-600), now: now), "10m ago")
-    expectEqual(Format.relative(now.addingTimeInterval(-7200), now: now), "2h ago")
-    expectEqual(Format.relative(now.addingTimeInterval(-172800), now: now), "2d ago")
-    expectEqual(Format.relative(now.addingTimeInterval(60), now: now), "just now", "a clock skew must not print a negative age")
-}
-
 // MARK: - Presentation
 
-func statusFor(_ name: String, _ state: ShareState, path: String? = nil,
-               capacity: VolumeCapacity? = nil) -> ShareStatus {
+func statusFor(_ name: String, _ state: ShareState, path: String? = nil) -> ShareStatus {
     var st = ShareStatus(config: makeShare(name))
     st.state = state
     st.mountPath = path
-    st.capacity = capacity
     return st
 }
 
@@ -852,42 +804,6 @@ h.test("presentation: the header dot reports the worst thing happening") {
     expect(!Presentation.headline([statusFor("A", .paused)], paused: false).healthy)
 }
 
-// MARK: - Capacity
-
-h.test("capacity: reads real numbers for the root volume") {
-    guard let cap = Prober.capacity(path: "/", timeout: 5) else {
-        expect(false, "no capacity for /")
-        return
-    }
-    expect(cap.totalBytes > 1_000_000_000, "total \(cap.totalBytes)")
-    expect(cap.freeBytes <= cap.totalBytes)
-    expectEqual(cap.usedBytes, cap.totalBytes - cap.freeBytes)
-    if let used = cap.usedFraction { expect(used >= 0 && used <= 1, "fraction \(used)") }
-    expectNil(Prober.capacity(path: "/definitely/not/here", timeout: 5))
-}
-
-h.test("capacity: a share that answers records its capacity") {
-    let sys = FakeSystem()
-    sys.table = [sys.entry(share: "Alpha")]
-    sys.capacityByPath["/Volumes/Alpha"] = VolumeCapacity(totalBytes: 1_000, freeBytes: 400)
-    let c = ShareController(config: makeShare("Alpha"), settings: testSettings(), system: sys, log: quietLog)
-    c.evaluateSync(reason: "test")
-    expectEqual(c.currentStatus.capacity, VolumeCapacity(totalBytes: 1_000, freeBytes: 400))
-    expect(sys.calls.contains("capacity /Volumes/Alpha"), "the live adapter is asked, not the protocol default: \(sys.calls)")
-}
-
-h.test("capacity: a share that stops answering keeps its last known capacity") {
-    let sys = FakeSystem()
-    sys.table = [sys.entry(share: "Alpha")]
-    sys.capacityByPath["/Volumes/Alpha"] = VolumeCapacity(totalBytes: 1_000, freeBytes: 400)
-    let c = ShareController(config: makeShare("Alpha"), settings: testSettings(), system: sys, log: quietLog)
-    c.evaluateSync(reason: "1")
-    sys.probeResults["/Volumes/Alpha"] = .hung
-    c.evaluateSync(reason: "2")
-    expectEqual(c.currentStatus.state, .stale)
-    expectEqual(c.currentStatus.capacity?.freeBytes, 400, "stale rows still show the last figure")
-}
-
 // MARK: - Share browser
 
 let smbutilViewFixture = """
@@ -961,7 +877,7 @@ h.test("engine: adding a share persists it and leaves the other controllers alon
     let cfgPath = dir + "/config.json"
     try cfg.save(to: cfgPath)
     let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: cfgPath,
-                        statusPath: dir + "/status.json", commandDir: dir + "/commands")
+                        statusPath: dir + "/status.json")
     let mediaBefore = engine.controller(named: "Alpha")
     expectNotNil(mediaBefore)
     // Let Media learn that it is healthy, which is what licenses recovery.
@@ -982,7 +898,7 @@ h.test("engine: adding rejects duplicates by name and by server plus share") {
     let dir = makeTempDir()
     try cfg.save(to: dir + "/config.json")
     let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: dir + "/config.json",
-                        statusPath: dir + "/status.json", commandDir: dir + "/commands")
+                        statusPath: dir + "/status.json")
     expectThrows("same name") { try engine.addShare(makeShare("alpha")) }
     // Same server and share under a different label is the same volume twice.
     expectThrows("same server and share") {
@@ -1005,7 +921,7 @@ h.test("engine: removing a share persists it and stops that controller acting") 
     let cfgPath = dir + "/config.json"
     try cfg.save(to: cfgPath)
     let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: cfgPath,
-                        statusPath: dir + "/status.json", commandDir: dir + "/commands")
+                        statusPath: dir + "/status.json")
     let doomed = engine.controller(named: "Beta")
     expectNotNil(doomed)
 
@@ -1034,13 +950,13 @@ h.test("engine: removing a share leaves the volume mounted") {
     let dir = makeTempDir()
     try cfg.save(to: dir + "/config.json")
     let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: dir + "/config.json",
-                        statusPath: dir + "/status.json", commandDir: dir + "/commands")
+                        statusPath: dir + "/status.json")
     try engine.removeShare(named: "Alpha")
     expect(!sys.calls.contains { $0.hasPrefix("unmount") }, "no unmount: \(sys.calls)")
     expectEqual(sys.mountTable().count, 1, "still mounted")
 }
 
-h.test("engine: start evaluates every share, writes status, and honours commands") {
+h.test("engine: start evaluates every share and writes status") {
     let sys = FakeSystem()
     sys.reachableHosts = ["nas.test"]
     sys.table = [sys.entry(share: "Alpha")]
@@ -1051,8 +967,7 @@ h.test("engine: start evaluates every share, writes status, and honours commands
     let cfgPath = dir + "/config.json"
     try cfg.save(to: cfgPath)
     let statusPath = dir + "/status.json"
-    let cmdDir = dir + "/commands"
-    let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: cfgPath, statusPath: statusPath, commandDir: cmdDir)
+    let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: cfgPath, statusPath: statusPath)
     engine.start()
     defer { engine.stop() }
 
@@ -1063,10 +978,10 @@ h.test("engine: start evaluates every share, writes status, and honours commands
     expect(sys.calls.contains("mount smb://tester@nas.test/Beta"), "the unmounted share was mounted")
     expect(!sys.calls.contains { $0.hasPrefix("mount") && $0.hasSuffix("/Alpha") }, "Media was already mounted")
 
-    // Pause via command file, then resume.
-    _ = try CommandQueue.send(Command(kind: .pause), dir: cmdDir)
+    // Pause and resume reach the status file the panel reads.
+    engine.setPaused(true)
     expect(waitUntil(3) { EngineStatus.read(from: statusPath)?.paused == true }, "paused")
-    _ = try CommandQueue.send(Command(kind: .resume), dir: cmdDir)
+    engine.setPaused(false)
     expect(waitUntil(3) { EngineStatus.read(from: statusPath)?.paused == false }, "resumed")
 
     // Reload picks up a share added on disk.
@@ -1083,7 +998,7 @@ h.test("engine: eject-on-sleep toggle persists") {
     let dir = makeTempDir()
     let cfgPath = dir + "/config.json"
     try cfg.save(to: cfgPath)
-    let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: cfgPath, statusPath: dir + "/status.json", commandDir: dir + "/commands")
+    let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: cfgPath, statusPath: dir + "/status.json")
     engine.setEjectOnSleep(share: "alpha", true)
     expectEqual(try Config.load(from: cfgPath).shares[0].ejectOnSleep, true)
     expectEqual(engine.config.shares[0].ejectOnSleep, true)

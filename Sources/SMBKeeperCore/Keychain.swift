@@ -28,24 +28,6 @@ public enum Keychain {
     /// Store (or update) a password for `server`/`account`, trusting
     /// NetAuthAgent so mounts authenticate without a dialog.
     ///
-    /// The secret is never passed as an argument, where any local process
-    /// could read it from the process list. `security` is invoked with a bare
-    /// `-w`, which makes it prompt, and the prompt is answered on the
-    /// terminal this process inherits. Use this from the command line only.
-    ///
-    /// Returns the exit status of `security`.
-    @discardableResult
-    public static func storeCredentialInteractively(server: String, account: String) -> Int32 {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: security)
-        p.arguments = ["add-internet-password", "-a", account, "-s", server, "-l", server] + storeArguments
-        do { try p.run() } catch { return -1 }
-        p.waitUntilExit()
-        return p.terminationStatus
-    }
-
-    /// Store a password without a terminal, for the GUI.
-    ///
     /// `security` asks for the password and then for a confirmation, and reads
     /// both from standard input, so the secret is written down a pipe rather
     /// than placed in `argv`.
