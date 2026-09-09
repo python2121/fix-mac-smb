@@ -820,17 +820,16 @@ h.test("presentation: free space counts each volume once") {
     expectNil(Presentation.freeBytes([statusFor("D", .unmounted)]), "nothing mounted, nothing to report")
 }
 
-h.test("presentation: footer counts shares and answering shares") {
-    let cap = VolumeCapacity(totalBytes: 10_000_000_000, freeBytes: 7_400_000_000_000)
-    let shares = [statusFor("A", .healthy, path: "/Volumes/A", capacity: cap),
+h.test("presentation: the footer reports only how many are answering") {
+    let shares = [statusFor("A", .healthy, path: "/Volumes/A"),
                   statusFor("B", .stale),
                   statusFor("C", .paused)]
-    let summary = Presentation.footerSummary(shares)
-    expect(summary.contains("3 shares"), summary)
-    expect(summary.contains("1 of 2 answering"), summary)
-    expect(summary.contains("7.4 TB free"), summary)
-    expectEqual(Presentation.footerSummary([]), "0 shares")
-    expect(Presentation.footerSummary([statusFor("A", .healthy)]).contains("1 share "), "singular")
+    // Paused shares are not being watched, so they are not in the denominator.
+    expectEqual(Presentation.footerSummary(shares), "1 of 2 answering")
+    expectEqual(Presentation.footerSummary([statusFor("A", .healthy)]), "1 of 1 answering")
+    expectEqual(Presentation.footerSummary([]), "No shares")
+    expectEqual(Presentation.footerSummary([statusFor("A", .paused)]), "Paused",
+                "with everything paused there is nothing to answer")
 }
 
 h.test("presentation: the header dot reports the worst thing happening") {

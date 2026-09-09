@@ -94,15 +94,14 @@ public enum Presentation {
         return found ? total : nil
     }
 
-    /// The footer line: how many shares, how many are answering, and how much
-    /// room is left on them.
+    /// The footer line: how many of the watched shares are answering, and
+    /// nothing else. Counts and capacities are already on the rows themselves.
     public static func footerSummary(_ shares: [ShareStatus]) -> String {
+        if shares.isEmpty { return "No shares" }
         let watched = shares.filter { $0.state != .paused }
+        if watched.isEmpty { return "Paused" }
         let healthy = watched.filter { $0.state == .healthy }.count
-        var parts = ["\(shares.count) share\(shares.count == 1 ? "" : "s")"]
-        if !watched.isEmpty { parts.append("\(healthy) of \(watched.count) answering") }
-        if let free = freeBytes(shares) { parts.append("\(Format.bytes(free)) free") }
-        return parts.joined(separator: "   ")
+        return "\(healthy) of \(watched.count) answering"
     }
 
     /// One-line state for the header: the dot's meaning.

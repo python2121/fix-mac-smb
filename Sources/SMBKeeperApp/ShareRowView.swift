@@ -67,20 +67,14 @@ struct ShareRowView: View {
     }
 
     /// Capacity when the share is answering, otherwise whatever the engine last
-    /// said about it. Latency rides along only while the row is collapsed: once
-    /// it is open the detail grid states it, and saying it twice on screen at
-    /// the same time is just noise.
+    /// said about it. Latency is not here at all: it belongs to the expanded
+    /// grid, where there is room to label it.
     private var subtitle: String {
         guard share.state == .healthy else { return share.detail }
-        var parts: [String] = []
         if let capacity = share.capacity, capacity.totalBytes > 0 {
-            parts.append("\(Format.bytes(capacity.freeBytes)) free of \(Format.bytes(capacity.totalBytes))")
+            return "\(Format.bytes(capacity.freeBytes)) free of \(Format.bytes(capacity.totalBytes))"
         }
-        if !isExpanded, let ms = share.lastProbeLatencyMs {
-            parts.append(Format.latency(milliseconds: ms))
-        }
-        if parts.isEmpty { return share.mountPath ?? share.detail }
-        return parts.joined(separator: " · ")
+        return share.mountPath ?? share.detail
     }
 
     /// Reveal sits beside the primary action rather than inside the expanded
@@ -103,13 +97,13 @@ struct ShareRowView: View {
         }
     }
 
-    /// Mount (green) when it is not mounted, Eject (plain) when it is healthy,
-    /// and a red ✕ to force-unmount one that has stopped answering.
+    /// Mount (green) when it is not mounted, Unmount (plain) when it is
+    /// healthy, and a red ✕ to force-unmount one that has stopped answering.
     @ViewBuilder
     private var primaryAction: some View {
         switch share.state {
         case .healthy:
-            outlineButton(title: "Eject", color: nil, help: "Unmount this share") {
+            outlineButton(title: "Unmount", color: nil, help: "Unmount \(share.name)") {
                 store.unmount(share.name)
             }
         case .stale, .failed:
@@ -296,7 +290,10 @@ struct ShareRowView: View {
                     Text(value)
                         .font(.caption2)
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        // A path's useful end is its last component, so drop
+                        // characters from the front rather than the middle:
+                        // "…olumes/Andrew" beats "/Vol…drew".
+                        .truncationMode(value.hasPrefix("/") ? .head : .middle)
                         .textSelection(.enabled)
                         .help(value)
                 }
