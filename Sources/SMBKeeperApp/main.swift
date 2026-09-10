@@ -61,12 +61,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.action = #selector(togglePanel(_:))
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         // The icon is not a template image (its badge is coloured), so rebuild
-        // it whenever the menu bar switches between light and dark.
+        // it when the menu bar switches between light and dark. The rebuild
+        // must be conditional: assigning a new image makes AppKit re-render
+        // the button, which reports as an appearance change and fires this
+        // observer again. An unconditional rebuild here spins the main thread
+        // at 100% forever. refreshIcon keys its cache on the appearance name,
+        // so it only touches the button when something actually changed.
         appearanceObserver = statusItem.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
-            Task { @MainActor in
-                self?.lastIconKey = ""
-                self?.refreshIcon()
-            }
+            Task { @MainActor in self?.refreshIcon() }
         }
 
         panel = PanelController(store: store, statusItem: statusItem, actions: panelActions())
@@ -155,8 +157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             name = "externaldrive.badge.checkmark"; badge = Self.healthyBadge
             tip = "SMB Keeper: all shares healthy"
         }
-        if name != lastIconKey {
-            lastIconKey = name
+        // The appearance is part of the key because the badge colours are
+        // resolved when the image is built, not when it is drawn.
+        let key = name + "|" + button.effectiveAppearance.name.rawValue
+        if key != lastIconKey {
+            lastIconKey = key
             if let img = symbol(name, badge: badge) {
                 button.image = img
                 button.title = ""
