@@ -146,24 +146,6 @@ final class AddShareWindowController: NSObject, NSWindowDelegate {
         return container
     }
 
-    /// Report the laid-out geometry so a smoke test can prove no control
-    /// collapsed to nothing. Used by the `--show-add-share` debugging flag.
-    func layoutReport() -> String {
-        guard let window = window, let root = window.contentView else { return "no window" }
-        func box(_ name: String, _ v: NSView) -> String {
-            String(format: "%@ %.0fx%.0f at %.0f,%.0f", name, v.frame.width, v.frame.height, v.frame.minX, v.frame.minY)
-        }
-        window.contentView?.layoutSubtreeIfNeeded()
-        return [box("window", root),
-                box("server", serverField),
-                box("account", accountField),
-                box("password", passwordField),
-                box("share", shareCombo),
-                box("find", findButton),
-                box("status", statusLabel),
-                box("add", addButton)].joined(separator: "; ")
-    }
-
     private func label(_ text: String) -> NSTextField {
         let l = NSTextField(labelWithString: text)
         l.alignment = .right

@@ -54,7 +54,7 @@ the kernel reports the mount table changed.
 
 ```
 make            # debug build
-make test       # run the test harness (72 tests, no XCTest)
+make test       # run the test harness (65 tests, no XCTest)
 make app        # build/SMB Keeper.app, ad-hoc signed
 make install    # copy to ~/Applications and start at login
 make uninstall  # remove the agent and the app (config and logs stay)
@@ -173,4 +173,4 @@ error it gets looks like "Network is down" or "No route to host". The kernel
 SMB client is not subject to that setting, so mounts still work. SMB Keeper's
 reachability gate recognises the pattern, falls back to `ping`, and proceeds
 with the mount attempt anyway, logging one warning. If you see that warning,
-allow SMB Keeper (or the terminal you run `smbkeeper` from) in that panel.
+allow SMB Keeper in that panel.

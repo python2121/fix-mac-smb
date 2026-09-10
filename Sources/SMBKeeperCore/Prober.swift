@@ -36,12 +36,6 @@ public enum Prober {
         return inFlight[path] != nil
     }
 
-    /// How long the outstanding probe for `path` has been stuck, if any.
-    public static func stuckSince(_ path: String) -> Date? {
-        lock.lock(); defer { lock.unlock() }
-        return inFlight[path]
-    }
-
     /// Probe a mounted volume with a hard deadline.
     ///
     /// `statfs` on an smbfs mount round-trips to the server for free-space

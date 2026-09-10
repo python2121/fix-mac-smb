@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var panel: PanelController!
     private var refreshTimer: Timer?
     private var lastIconKey = ""
+    private var appearanceObserver: NSKeyValueObservation?
     private var addShareWindow: AddShareWindowController?
 
     // Top-level code is nonisolated, so the delegate has to be constructible
@@ -44,7 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return
         }
         if let st = EngineStatus.read(), st.daemonAlive, st.pid != getpid() {
-            alert("SMB Keeper is already running", "Another instance (pid \(st.pid)) is active. Quit it first, or use `smbkeeper` to control it.")
+            alert("SMB Keeper is already running", "Another instance (pid \(st.pid)) is active. Quit it first.")
             NSApp.terminate(nil)
             return
         }
@@ -59,42 +60,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel(_:))
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        // The icon is not a template image (its badge is coloured), so rebuild
+        // it whenever the menu bar switches between light and dark.
+        appearanceObserver = statusItem.button?.observe(\.effectiveAppearance) { [weak self] _, _ in
+            Task { @MainActor in
+                self?.lastIconKey = ""
+                self?.refreshIcon()
+            }
+        }
 
         panel = PanelController(store: store, statusItem: statusItem, actions: panelActions())
 
         refreshIcon()
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.refreshIcon() }
-        }
-
-        // Debugging aids, for checking layout without clicking the menu bar.
-        if CommandLine.arguments.contains("--show-panel") {
-            panel.open()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
-                MainActor.assumeIsolated {
-                    Log.shared.info("app", "panel layout: \(self?.panel.layoutReport() ?? "none")")
-                }
-            }
-        }
-        if let idx = CommandLine.arguments.firstIndex(of: "--snapshot"),
-           idx + 1 < CommandLine.arguments.count {
-            let path = CommandLine.arguments[idx + 1]
-            panel.open()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                MainActor.assumeIsolated {
-                    let ok = self?.panel.snapshot(to: path) ?? false
-                    Log.shared.info("app", "snapshot to \(path): \(ok ? "written" : "failed")")
-                    NSApp.terminate(nil)
-                }
-            }
-        }
-        if CommandLine.arguments.contains("--show-add-share") {
-            showAddShare()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                MainActor.assumeIsolated {
-                    Log.shared.info("app", "add-share layout: \(self?.addShareWindow?.layoutReport() ?? "none")")
-                }
-            }
         }
     }
 
@@ -114,35 +93,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Status item
 
-    private func symbol(_ name: String, fallback: String) -> NSImage? {
-        let img = NSImage(systemSymbolName: name, accessibilityDescription: "SMB Keeper")
-            ?? NSImage(systemSymbolName: fallback, accessibilityDescription: "SMB Keeper")
-        img?.isTemplate = true
+    /// Builds the status icon. The drive body always takes the label colour, so
+    /// it follows light/dark mode and the menu bar tint like a template image
+    /// would; only the badge (the small circle in the corner) is coloured.
+    /// SF Symbols draw the badge as palette layer 0 and the drive as layer 1.
+    private func symbol(_ name: String, badge: NSColor?) -> NSImage? {
+        guard let base = NSImage(systemSymbolName: name, accessibilityDescription: "SMB Keeper")
+            ?? NSImage(systemSymbolName: "externaldrive", accessibilityDescription: "SMB Keeper")
+        else { return nil }
+        guard let badge else {
+            base.isTemplate = true
+            return base
+        }
+        let palette = NSImage.SymbolConfiguration(paletteColors: [badge, .labelColor])
+        let img = base.withSymbolConfiguration(palette) ?? base
+        img.isTemplate = false
         return img
     }
+
+    /// A system colour pulled part of the way toward the label colour, so the
+    /// badge reads as a hint of colour rather than a traffic light. Resolved
+    /// per appearance, so it stays right in both light and dark menu bars.
+    private static func muted(_ tint: NSColor, by fraction: CGFloat) -> NSColor {
+        NSColor(name: nil) { appearance in
+            var out = tint
+            appearance.performAsCurrentDrawingAppearance {
+                let t = tint.usingColorSpace(.sRGB) ?? tint
+                let label = NSColor.labelColor.usingColorSpace(.sRGB) ?? .labelColor
+                out = t.blended(withFraction: fraction, of: label) ?? t
+            }
+            return out
+        }
+    }
+
+    private static let healthyBadge = muted(.systemGreen, by: 0.45)
+    private static let troubleBadge = muted(.systemRed, by: 0.15)
 
     private func refreshIcon() {
         guard let engine = engine, let button = statusItem?.button else { return }
         let st = engine.status
         let states = st.shares.filter { $0.state != .paused }.map { $0.state }
         let name: String
+        let badge: NSColor?
         let tip: String
         if engine.paused {
-            name = "externaldrive.badge.minus"; tip = "SMB Keeper: paused"
+            name = "externaldrive.badge.minus"; badge = .secondaryLabelColor
+            tip = "SMB Keeper: paused"
         } else if states.contains(.mounting) || states.contains(.unmounting) {
-            name = "externaldrive.badge.timemachine"; tip = "SMB Keeper: working"
+            name = "externaldrive.badge.timemachine"; badge = .labelColor
+            tip = "SMB Keeper: working"
         } else if states.contains(.stale) || states.contains(.failed) {
-            name = "externaldrive.badge.exclamationmark"; tip = "SMB Keeper: a share needs attention"
+            name = "externaldrive.badge.exclamationmark"; badge = Self.troubleBadge
+            tip = "SMB Keeper: a share needs attention"
         } else if states.contains(.unreachable) || states.contains(.unmounted) {
-            name = "externaldrive.badge.xmark"; tip = "SMB Keeper: a share is not mounted"
+            name = "externaldrive.badge.xmark"; badge = Self.troubleBadge
+            tip = "SMB Keeper: a share is not mounted"
         } else if states.isEmpty {
-            name = "externaldrive"; tip = "SMB Keeper: no shares configured"
+            name = "externaldrive"; badge = nil
+            tip = "SMB Keeper: no shares configured"
         } else {
-            name = "externaldrive.badge.checkmark"; tip = "SMB Keeper: all shares healthy"
+            name = "externaldrive.badge.checkmark"; badge = Self.healthyBadge
+            tip = "SMB Keeper: all shares healthy"
         }
         if name != lastIconKey {
             lastIconKey = name
-            if let img = symbol(name, fallback: "externaldrive") {
+            if let img = symbol(name, badge: badge) {
                 button.image = img
                 button.title = ""
             } else {

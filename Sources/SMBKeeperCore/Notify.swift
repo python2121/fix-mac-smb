@@ -13,14 +13,8 @@ public final class DarwinNotification {
         if rc == NOTIFY_STATUS_OK { token = t }
     }
 
-    public var isValid: Bool { token != NOTIFY_TOKEN_INVALID }
-
     deinit {
         if token != NOTIFY_TOKEN_INVALID { notify_cancel(token) }
-    }
-
-    public static func post(_ name: String) {
-        notify_post(name)
     }
 
     /// Kernel-posted names for mount table changes.

@@ -137,10 +137,4 @@ public enum Reachability {
         let r = Subprocess.run("/sbin/ping", ["-c", "1", "-W", String(ms), "-q", target], timeout: timeout + 2)
         return r.succeeded
     }
-
-    /// Convenience: true only when a TCP handshake completed.
-    public static func tcpReachable(host: String, port: UInt16 = 445, timeout: Double) -> Bool {
-        if case .reachable = tcpProbe(host: host, port: port, timeout: timeout) { return true }
-        return false
-    }
 }

@@ -7,7 +7,6 @@ let package = Package(
     products: [
         .executable(name: "SMBKeeperApp", targets: ["SMBKeeperApp"]),
         .executable(name: "smbkeeper-tests", targets: ["smbkeeper-tests"]),
-        .library(name: "SMBKeeperCore", targets: ["SMBKeeperCore"]),
     ],
     targets: [
         .target(

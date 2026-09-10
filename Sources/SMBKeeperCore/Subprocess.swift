@@ -13,12 +13,10 @@ public enum Subprocess {
     /// Run an executable with a hard deadline. On timeout the process is sent
     /// SIGTERM, then SIGKILL two seconds later. Output is captured
     /// asynchronously so a chatty child cannot deadlock on a full pipe.
-    public static func run(_ path: String, _ args: [String], timeout: Double,
-                           environment: [String: String]? = nil) -> SubprocessResult {
+    public static func run(_ path: String, _ args: [String], timeout: Double) -> SubprocessResult {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
-        if let env = environment { p.environment = env }
         let out = Pipe(), err = Pipe()
         p.standardOutput = out
         p.standardError = err

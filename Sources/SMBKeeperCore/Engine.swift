@@ -182,17 +182,6 @@ public final class Engine {
         return removed
     }
 
-    /// Re-read the configuration file. Shares that changed get fresh controllers.
-    public func reload() {
-        do {
-            let fresh = try Config.load(from: configPath)
-            apply(config: fresh)
-            log.info("engine", "configuration reloaded (\(fresh.shares.count) shares)")
-        } catch {
-            log.error("engine", "reload failed: \(error)")
-        }
-    }
-
     /// Replace the configuration in memory (and on disk when `persist`).
     public func apply(config new: Config, persist: Bool = false) {
         let old = lock.withLock { config }
@@ -211,13 +200,6 @@ public final class Engine {
             t.schedule(deadline: .now() + i, repeating: i, leeway: .seconds(2))
         }
         writeStatusSoon()
-    }
-
-    public func setEjectOnSleep(share name: String, _ value: Bool) {
-        var c = lock.withLock { config }
-        guard let idx = c.shares.firstIndex(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else { return }
-        c.shares[idx].ejectOnSleep = value
-        apply(config: c, persist: true)
     }
 
     public func setPaused(_ p: Bool) {

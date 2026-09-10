@@ -99,8 +99,6 @@ public enum MountTable {
         return result
     }
 
-    public static func smbMounts() -> [MountEntry] { snapshot().filter { $0.isSMB } }
-
     /// True when `path` is itself a mount point (not merely inside one).
     public static func isMountPoint(_ path: String) -> Bool {
         snapshot().contains { $0.on == path }

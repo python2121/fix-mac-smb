@@ -234,11 +234,6 @@ public struct Config: Codable, Equatable {
         return config
     }
 
-    /// Load the config, or return an empty one if none exists yet.
-    public static func loadOrEmpty(from path: String = Paths.configFile) throws -> Config {
-        do { return try load(from: path) } catch ConfigError.missing { return Config() }
-    }
-
     public func save(to path: String = Paths.configFile) throws {
         try validate()
         let encoder = JSONEncoder()

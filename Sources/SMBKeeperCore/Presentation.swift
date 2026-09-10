@@ -1,35 +1,12 @@
 import Foundation
 
-/// One status section of the panel list.
-public struct ShareGroup: Equatable {
-    public let name: String
-    public let shares: [ShareStatus]
-    public init(name: String, shares: [ShareStatus]) {
-        self.name = name
-        self.shares = shares
-    }
-}
-
-/// The view-model arithmetic behind the panel: which section a share belongs
-/// to, what order sections appear in, what the search box matches, and the
-/// footer line. Kept out of the SwiftUI layer so it can be tested directly.
+/// The view-model arithmetic behind the panel: the order shares are listed
+/// in, what the row's button offers, and the header line. Kept out of the
+/// SwiftUI layer so it can be tested directly.
 public enum Presentation {
-    /// Section heading for a state. Several states share a heading, because
-    /// what the reader needs to know is "is this one fine, busy, or broken".
-    public static func groupName(for state: ShareState) -> String {
-        switch state {
-        case .stale, .failed: return "Needs attention"
-        case .mounting, .unmounting: return "Working"
-        case .unreachable: return "Unreachable"
-        case .unmounted: return "Not mounted"
-        case .unknown: return "Checking"
-        case .healthy: return "Healthy"
-        case .paused: return "Paused"
-        }
-    }
-
-    /// Sections are ordered worst first: a problem should never be below the
-    /// fold while healthy shares take the top of the list.
+    /// Shares are listed worst first: a problem should never be below the
+    /// fold while healthy shares take the top of the list. States with the
+    /// same rank are equally bad and keep their configured order.
     public static func rank(_ state: ShareState) -> Int {
         switch state {
         case .stale, .failed: return 0
@@ -42,40 +19,15 @@ public enum Presentation {
         }
     }
 
-    /// Free-text match over the share's name, its share name, and its server.
-    public static func matches(_ share: ShareStatus, query: String) -> Bool {
-        let q = query.trimmingCharacters(in: .whitespaces)
-        if q.isEmpty { return true }
-        for field in [share.name, share.share, share.server] {
-            if field.range(of: q, options: [.caseInsensitive, .diacriticInsensitive]) != nil { return true }
-        }
-        return false
-    }
-
-    /// Group the shares into ordered sections, dropping anything the search
-    /// filters out. Shares keep their configured order inside a section.
-    public static func groups(_ shares: [ShareStatus], matching query: String = "") -> [ShareGroup] {
-        let visible = shares.filter { matches($0, query: query) }
-        var buckets: [String: [ShareStatus]] = [:]
-        var order: [(name: String, rank: Int)] = []
-        for share in visible {
-            let name = groupName(for: share.state)
-            if buckets[name] == nil {
-                buckets[name] = []
-                order.append((name, rank(share.state)))
+    /// The shares worst first, each keeping its configured position among
+    /// its equals. A stable sort by rank.
+    public static func ordered(_ shares: [ShareStatus]) -> [ShareStatus] {
+        shares.enumerated()
+            .sorted { a, b in
+                let ra = rank(a.element.state), rb = rank(b.element.state)
+                return ra == rb ? a.offset < b.offset : ra < rb
             }
-            buckets[name]?.append(share)
-        }
-        return order
-            .sorted { $0.rank == $1.rank ? $0.name < $1.name : $0.rank < $1.rank }
-            .map { ShareGroup(name: $0.name, shares: buckets[$0.name] ?? []) }
-    }
-
-    /// The shares as one flat list, worst first, with each share keeping its
-    /// configured position among its equals. The same order the sections gave,
-    /// without the headings.
-    public static func ordered(_ shares: [ShareStatus], matching query: String = "") -> [ShareStatus] {
-        groups(shares, matching: query).flatMap { $0.shares }
+            .map { $0.element }
     }
 
     /// Whether a share currently has a volume attached. `failed` is a mount

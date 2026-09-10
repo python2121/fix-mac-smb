@@ -12,15 +12,14 @@ struct PanelActions {
     var quit: () -> Void = {}
 }
 
-/// The menu bar panel: header strip (title row plus a toolbar with search and
-/// add), status-grouped share list with expandable rows, and a footer with the
-/// aggregate summary and controls.
+/// The menu bar panel: a header with the aggregate state, the share list
+/// ordered worst first, and a footer with the controls.
 struct PanelView: View {
     @ObservedObject var store: ShareStore
     var actions = PanelActions()
 
     /// Matches the panel width set in `PanelController`.
-    private let width: CGFloat = 380
+    private let width: CGFloat = 304
     /// Roughly eleven collapsed rows before the list starts scrolling.
     private let maxListHeight: CGFloat = 400
 

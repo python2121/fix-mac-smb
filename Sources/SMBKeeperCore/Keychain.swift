@@ -11,15 +11,6 @@ public enum Keychain {
     static let netAuthSysAgent = "/System/Library/CoreServices/NetAuthAgent.app/Contents/MacOS/NetAuthSysAgent"
     static let security = "/usr/bin/security"
 
-    /// Whether an SMB password item exists for the server (and account, if given).
-    /// This does not read the secret, so it never prompts.
-    public static func hasCredential(server: String, account: String?) -> Bool {
-        var args = ["find-internet-password", "-s", server, "-r", "smb "]
-        if let a = account, !a.isEmpty { args += ["-a", a] }
-        let r = Subprocess.run(security, args, timeout: 10)
-        return r.succeeded
-    }
-
     private static var storeArguments: [String] {
         ["add-internet-password", "-r", "smb ", "-D", "Network Password",
          "-T", netAuthAgent, "-T", netAuthSysAgent, "-U", "-w"]
@@ -50,12 +41,5 @@ public enum Keychain {
         _ = err.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
         return p.terminationStatus
-    }
-
-    /// Remove the item written by `storeCredential`.
-    @discardableResult
-    public static func deleteCredential(server: String, account: String) -> Int32 {
-        let r = Subprocess.run(security, ["delete-internet-password", "-a", account, "-s", server, "-r", "smb "], timeout: 10)
-        return r.status ?? -1
     }
 }

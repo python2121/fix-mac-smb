@@ -39,8 +39,6 @@ public final class NetworkMonitor {
 
     public func stop() { monitor.cancel() }
 
-    public var current: Snapshot? { queue.sync { last } }
-
     static func kind(_ t: NWInterface.InterfaceType) -> String {
         switch t {
         case .wifi: return "wifi"

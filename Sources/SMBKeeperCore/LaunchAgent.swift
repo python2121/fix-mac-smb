@@ -1,7 +1,7 @@
 import Foundation
 
-/// Installs the per-user launchd agent that starts the daemon (or the menu bar
-/// app) at login and restarts it if it exits.
+/// Installs the per-user launchd agent that starts the app at login and
+/// restarts it if it exits.
 public enum LaunchAgent {
     public static func plist(program: String, arguments: [String]) -> String {
         var args = [program] + arguments
@@ -74,15 +74,4 @@ public enum LaunchAgent {
     }
 
     public static var isInstalled: Bool { FileManager.default.fileExists(atPath: Paths.launchAgentPlist) }
-
-    /// Ask launchd whether the job is loaded and its pid, if any.
-    public static func loadedPID() -> Int32? {
-        let r = Subprocess.run("/bin/launchctl", ["print", "\(domain)/\(Paths.launchAgentLabel)"], timeout: 10)
-        guard r.succeeded else { return nil }
-        for line in r.stdout.split(separator: "\n") {
-            let t = line.trimmingCharacters(in: .whitespaces)
-            if t.hasPrefix("pid = "), let v = Int32(t.dropFirst(6)) { return v }
-        }
-        return nil
-    }
 }

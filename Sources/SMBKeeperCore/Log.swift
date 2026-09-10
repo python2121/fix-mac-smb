@@ -53,8 +53,8 @@ enum LogFormat {
     }
 }
 
-/// Thread-safe logger writing to a rotating file, the unified log, an in-memory
-/// ring buffer (for the menu bar app), and optionally stderr.
+/// Thread-safe logger writing to a rotating file, the unified log, and
+/// optionally stderr.
 public final class Log {
     public static let shared = Log()
 
@@ -62,15 +62,12 @@ public final class Log {
     private var handle: FileHandle?
     private var filePath: String?
     private var currentSize: UInt64 = 0
-    private var ring: [LogLine] = []
-    private var listeners: [(LogLine) -> Void] = []
     private let osLog = Logger(subsystem: Paths.bundleID, category: "engine")
 
     public var minLevel: LogLevel = .info
     public var echoToStderr = false
     public var maxFileBytes: UInt64 = 5 * 1024 * 1024
     public var keepRotations = 3
-    public var ringCapacity = 500
 
     public init() {}
 
@@ -113,19 +110,8 @@ public final class Log {
         try? openFileLocked(path)
     }
 
-    public func addListener(_ l: @escaping (LogLine) -> Void) {
-        lock.lock(); defer { lock.unlock() }
-        listeners.append(l)
-    }
-
-    public func recent(_ n: Int = 200) -> [LogLine] {
-        lock.lock(); defer { lock.unlock() }
-        return Array(ring.suffix(n))
-    }
-
     public func log(_ level: LogLevel, tag: String? = nil, _ message: String) {
         let line = LogLine(date: Date(), level: level, tag: tag, message: message)
-        var toNotify: [(LogLine) -> Void] = []
         lock.lock()
         if level >= minLevel {
             let text = line.formatted + "\n"
@@ -135,9 +121,6 @@ public final class Log {
                 if currentSize > maxFileBytes { rotateLocked() }
             }
             if echoToStderr { FileHandle.standardError.write(text.data(using: .utf8) ?? Data()) }
-            ring.append(line)
-            if ring.count > ringCapacity { ring.removeFirst(ring.count - ringCapacity) }
-            toNotify = listeners
         }
         lock.unlock()
 
@@ -148,7 +131,6 @@ public final class Log {
         case .warn: osLog.warning("\(osMessage, privacy: .public)")
         case .error: osLog.error("\(osMessage, privacy: .public)")
         }
-        for l in toNotify { l(line) }
     }
 
     public func debug(_ tag: String? = nil, _ m: String) { log(.debug, tag: tag, m) }

@@ -3,8 +3,7 @@ import SwiftUI
 import SMBKeeperCore
 
 /// Borderless panel that can still become key, so the SwiftUI controls inside
-/// (search field, buttons) receive clicks and keystrokes without activating the
-/// accessory app.
+/// receive clicks and keystrokes without activating the accessory app.
 final class KeyablePanel: NSPanel {
     /// Invoked on Escape (or Cmd+.) — a borderless panel has no close button,
     /// so this is the keyboard dismissal path.
@@ -15,11 +14,9 @@ final class KeyablePanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
 
-    // Arrow keys drive the list, never the search field's caret. Intercepted in
-    // sendEvent rather than keyDown because the field editor is first responder
-    // whenever the panel is open, and it swallows (and beeps at) the arrows
-    // before the window ever sees them. Up and Down do nothing in a single-line
-    // field, so nothing is lost by taking them.
+    // Arrow keys drive the list. Intercepted in sendEvent rather than keyDown
+    // so that whichever view is first responder cannot swallow (and beep at)
+    // them before the window sees them.
     override func sendEvent(_ event: NSEvent) {
         let arrows: Set<UInt16> = [125, 126]   // down, up
         let claimed: NSEvent.ModifierFlags = [.command, .option, .control]
@@ -60,7 +57,7 @@ final class PanelController {
     private var clickMonitor: Any?
 
     // Visual and motion tuning.
-    private let panelWidth: CGFloat = 380
+    private let panelWidth: CGFloat = 304
     private let cornerRadius: CGFloat = 12
     private let tintOpacity: CGFloat = 0.7
     private let slideDistance: CGFloat = 8
@@ -279,44 +276,5 @@ final class PanelController {
         let maxX = screen.visibleFrame.maxX - size.width
         point.x = min(max(point.x, minX), maxX)
         return point
-    }
-
-    /// Render the panel's content to a PNG, for checking the layout without
-    /// screenshotting the desktop. The window-server blur cannot be captured,
-    /// so the content is composited over the window background colour.
-    func snapshot(to path: String) -> Bool {
-        let view = hostingController.view
-        view.layoutSubtreeIfNeeded()
-        let bounds = view.bounds
-        guard bounds.width > 1, bounds.height > 1,
-              let rep = view.bitmapImageRepForCachingDisplay(in: bounds) else { return false }
-        view.cacheDisplay(in: bounds, to: rep)
-
-        let composited = NSImage(size: bounds.size)
-        composited.lockFocus()
-        NSColor.windowBackgroundColor.setFill()
-        bounds.fill()
-        rep.draw(in: bounds)
-        composited.unlockFocus()
-
-        guard let tiff = composited.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else { return false }
-        do {
-            try png.write(to: URL(fileURLWithPath: path))
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    /// Geometry report for the layout smoke test.
-    func layoutReport() -> String {
-        hostingController.view.layoutSubtreeIfNeeded()
-        let fitting = hostingController.view.fittingSize
-        let preferred = hostingController.preferredContentSize
-        return String(format: "fitting %.0fx%.0f; preferred %.0fx%.0f; panel %.0fx%.0f; visible %@",
-                      fitting.width, fitting.height, preferred.width, preferred.height,
-                      panel.frame.width, panel.frame.height, isVisible ? "yes" : "no")
     }
 }

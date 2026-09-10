@@ -103,8 +103,6 @@ h.test("config: missing file is a distinct error") {
     } catch ConfigError.missing {
         // expected
     }
-    let empty = try Config.loadOrEmpty(from: testHome + "/nope.json")
-    expectEqual(empty.shares.count, 0)
 }
 
 h.test("settings: backoff grows exponentially and caps") {
@@ -229,9 +227,11 @@ h.test("reachability: loopback with a listening port succeeds") {
     _ = withUnsafeMutablePointer(to: &bound_addr) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &len) } }
     let port = UInt16(bigEndian: bound_addr.sin_port)
     expect(port > 0)
-    expect(Reachability.tcpReachable(host: "127.0.0.1", port: port, timeout: 2), "connect to 127.0.0.1:\(port)")
+    expectEqual(Reachability.tcpProbe(host: "127.0.0.1", port: port, timeout: 2), .reachable, "connect to 127.0.0.1:\(port)")
     close(fd)
-    expect(!Reachability.tcpReachable(host: "127.0.0.1", port: port, timeout: 1), "closed port refuses")
+    if case .reachable = Reachability.tcpProbe(host: "127.0.0.1", port: port, timeout: 1) {
+        expect(false, "closed port refuses")
+    }
 }
 
 // MARK: - Subprocess
@@ -259,7 +259,7 @@ h.test("subprocess: large output does not deadlock") {
 
 // MARK: - Log
 
-h.test("log: writes, keeps a ring buffer, rotates") {
+h.test("log: writes, filters by level, rotates") {
     let log = Log()
     let path = testHome + "/log/test.log"
     log.maxFileBytes = 2000
@@ -268,14 +268,10 @@ h.test("log: writes, keeps a ring buffer, rotates") {
     log.debug("t", "hidden")
     for i in 0..<100 { log.info("t", "line \(i) " + String(repeating: "x", count: 40)) }
     expect(FileManager.default.fileExists(atPath: path + ".1"), "rotated once")
-    let recent = log.recent(5)
-    expectEqual(recent.count, 5)
-    expectEqual(recent.last?.message.hasPrefix("line 99"), true)
-    expect(!log.recent(1000).contains { $0.message == "hidden" }, "debug filtered")
-    var seen = 0
-    log.addListener { _ in seen += 1 }
-    log.warn("t", "one more")
-    expectEqual(seen, 1)
+    let current = (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+    let rotated = (try? String(contentsOfFile: path + ".1", encoding: .utf8)) ?? ""
+    expect((current + rotated).contains("line 99"), "latest line was written")
+    expect(!(current + rotated).contains("hidden"), "debug filtered")
 }
 
 // MARK: - Status and commands
@@ -709,55 +705,21 @@ func statusFor(_ name: String, _ state: ShareState, path: String? = nil) -> Shar
     return st
 }
 
-h.test("presentation: sections are ordered worst first") {
+h.test("presentation: shares are ordered worst first, stable within a rank") {
     let shares = [
         statusFor("A", .healthy),
         statusFor("B", .stale),
         statusFor("C", .unmounted),
         statusFor("D", .paused),
         statusFor("E", .healthy),
+        statusFor("F", .failed),
     ]
-    let groups = Presentation.groups(shares)
-    expectEqual(groups.map { $0.name }, ["Needs attention", "Not mounted", "Healthy", "Paused"])
-    expectEqual(groups.first?.shares.map { $0.name }, ["B"])
-    expectEqual(groups.last?.shares.map { $0.name }, ["D"])
-    // Shares keep their configured order inside a section.
-    expectEqual(groups[2].shares.map { $0.name }, ["A", "E"])
-}
-
-h.test("presentation: failed and stale share one heading, mounting and unmounting another") {
-    expectEqual(Presentation.groupName(for: .failed), Presentation.groupName(for: .stale))
-    expectEqual(Presentation.groupName(for: .mounting), Presentation.groupName(for: .unmounting))
-    expectEqual(Presentation.groupName(for: .healthy), "Healthy")
-}
-
-h.test("presentation: ordered() flattens the sections, worst first") {
-    let shares = [
-        statusFor("A", .healthy),
-        statusFor("B", .stale),
-        statusFor("C", .unmounted),
-        statusFor("D", .paused),
-        statusFor("E", .healthy),
-    ]
-    // Same order the sections gave, with the headings gone.
-    expectEqual(Presentation.ordered(shares).map { $0.name }, ["B", "C", "A", "E", "D"])
+    // Failed and stale are equally bad, mounting and unmounting equally busy.
+    expectEqual(Presentation.rank(.failed), Presentation.rank(.stale))
+    expectEqual(Presentation.rank(.mounting), Presentation.rank(.unmounting))
+    expectEqual(Presentation.ordered(shares).map { $0.name }, ["B", "F", "C", "A", "E", "D"])
     expectEqual(Presentation.ordered(shares).count, shares.count, "nothing is dropped")
     expectEqual(Presentation.ordered([]).count, 0)
-    // The flat order agrees with the grouped one it is built from.
-    expectEqual(Presentation.ordered(shares).map { $0.name },
-                Presentation.groups(shares).flatMap { $0.shares.map { $0.name } })
-}
-
-h.test("presentation: search matches name, share, and server") {
-    var share = ShareStatus(config: ShareConfig(name: "Photos", server: "nas.test", share: "Pictures", user: "tester"))
-    share.state = .healthy
-    expect(Presentation.matches(share, query: ""))
-    expect(Presentation.matches(share, query: "pho"), "by name")
-    expect(Presentation.matches(share, query: "PICT"), "by share, case-insensitive")
-    expect(Presentation.matches(share, query: "nas"), "by server")
-    expect(Presentation.matches(share, query: "  pho  "), "query is trimmed")
-    expect(!Presentation.matches(share, query: "zzz"))
-    expectEqual(Presentation.groups([share], matching: "zzz").count, 0, "filtered out entirely")
 }
 
 h.test("presentation: what counts as mounted") {
@@ -983,25 +945,6 @@ h.test("engine: start evaluates every share and writes status") {
     expect(waitUntil(3) { EngineStatus.read(from: statusPath)?.paused == true }, "paused")
     engine.setPaused(false)
     expect(waitUntil(3) { EngineStatus.read(from: statusPath)?.paused == false }, "resumed")
-
-    // Reload picks up a share added on disk.
-    var updated = try Config.load(from: cfgPath)
-    updated.shares.append(makeShare("Gamma"))
-    try updated.save(to: cfgPath)
-    engine.reload()
-    expect(waitUntil(3) { EngineStatus.read(from: statusPath)?.shares.count == 3 }, "third share appears")
-}
-
-h.test("engine: eject-on-sleep toggle persists") {
-    let sys = FakeSystem()
-    let cfg = Config(settings: testSettings(), shares: [makeShare("Alpha")])
-    let dir = makeTempDir()
-    let cfgPath = dir + "/config.json"
-    try cfg.save(to: cfgPath)
-    let engine = Engine(config: cfg, log: quietLog, system: sys, configPath: cfgPath, statusPath: dir + "/status.json")
-    engine.setEjectOnSleep(share: "alpha", true)
-    expectEqual(try Config.load(from: cfgPath).shares[0].ejectOnSleep, true)
-    expectEqual(engine.config.shares[0].ejectOnSleep, true)
 }
 
 h.finish()

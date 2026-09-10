@@ -17,47 +17,16 @@ public enum UnmountResult: Equatable {
 }
 
 public enum Unmounter {
-    /// Paths with an unmount still stuck in the kernel. A second `umount` for
-    /// the same path would just be another process stuck in the same syscall,
-    /// so callers get `.timedOut` straight back until the first one returns.
-    private static let inFlightLock = NSLock()
-    private static var inFlight = Set<String>()
-
-    static func begin(_ path: String) -> Bool {
-        inFlightLock.lock(); defer { inFlightLock.unlock() }
-        if inFlight.contains(path) { return false }
-        inFlight.insert(path)
-        return true
-    }
-
-    static func end(_ path: String) {
-        inFlightLock.lock(); inFlight.remove(path); inFlightLock.unlock()
-    }
-
-    public static func isInFlight(_ path: String) -> Bool {
-        inFlightLock.lock(); defer { inFlightLock.unlock() }
-        return inFlight.contains(path)
-    }
-
     /// Unmount a volume. With `force` false this is a single clean `umount`,
     /// which fails if any process has files open, exactly like Finder's eject.
     /// With `force` true it runs `umount -f` and then `diskutil unmount force`.
     /// Each step runs in a subprocess with its own deadline so a kernel that
     /// refuses to let go cannot take this process with it.
     ///
-    /// `timeout` bounds the whole operation approximately; each step gets a share of it.
+    /// `timeout` bounds the whole operation approximately; each step gets a
+    /// share of it. Calls for one share are serialised by its controller, and
+    /// force-unmount retries back off, so attempts never stack up.
     public static func unmount(path: String, force: Bool, timeout: Double, log: Log? = nil, tag: String? = nil) -> UnmountResult {
-        guard begin(path) else {
-            log?.debug(tag, "an earlier unmount of \(path) is still stuck in the kernel; not starting another")
-            return MountTable.isMountPoint(path) ? .timedOut : .unmounted
-        }
-        // The subprocess may outlive our deadline; release the slot only when
-        // it has really exited, on a background thread.
-        let release = DispatchSemaphore(value: 0)
-        let thread = Thread { release.wait(); end(path) }
-        thread.name = "unmount-slot"
-        thread.start()
-        defer { release.signal() }
         var steps: [(String, [String])] = []
         if force {
             steps.append(("/sbin/umount", ["-f", path]))

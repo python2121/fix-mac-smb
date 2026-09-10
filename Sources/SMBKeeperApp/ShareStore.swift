@@ -4,7 +4,7 @@ import SwiftUI
 import SMBKeeperCore
 
 /// What the panel observes: the engine's status, plus the view state that
-/// belongs to the panel itself (search text, selection, which rows are open).
+/// belongs to the panel itself (the selected row, pending unmount requests).
 ///
 /// The engine reports from arbitrary queues, so every published change is
 /// hopped to the main actor here and nowhere else.
@@ -54,8 +54,6 @@ final class ShareStore: ObservableObject {
     var visualOrder: [String] { orderedShares.map { $0.name } }
 
     func share(named name: String) -> ShareStatus? { shares.first { $0.name == name } }
-
-    func config(for name: String) -> ShareConfig? { engine.config.share(named: name) }
 
     // MARK: View state
 
@@ -126,11 +124,6 @@ final class ShareStore: ObservableObject {
     func forceUnmount(_ name: String) { engine.controller(named: name)?.requestUnmount(force: true) }
 
     func setPaused(_ value: Bool) { engine.setPaused(value) }
-
-    func setEjectOnSleep(_ name: String, _ value: Bool) {
-        engine.setEjectOnSleep(share: name, value)
-        refresh()
-    }
 
     func removeShare(_ name: String) throws {
         try engine.removeShare(named: name)
