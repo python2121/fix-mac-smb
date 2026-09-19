@@ -14,6 +14,17 @@ IDENTITY="${CODESIGN_IDENTITY:--}"
 VERSION="$(cat "$ROOT/VERSION" 2>/dev/null || echo 0.1.0)"
 
 cd "$ROOT"
+
+# The macOS 27 SDK implements @State as a macro whose plugin ships only with
+# Xcode, so @State does not build with the Command Line Tools. Use @ViewState
+# (Sources/SMBKeeperApp/ViewState.swift). Checked here so a machine that has
+# Xcode cannot let one slip back in.
+if grep -rnE '^[^/]*@State([^A-Za-z0-9_]|$)' Sources/ >/dev/null; then
+  echo "error: '@State' does not build with the Command Line Tools; use '@ViewState' instead:" >&2
+  grep -rnE '^[^/]*@State([^A-Za-z0-9_]|$)' Sources/ >&2
+  exit 1
+fi
+
 swift build -c release --product SMBKeeperApp
 BIN="$(swift build -c release --show-bin-path)"
 

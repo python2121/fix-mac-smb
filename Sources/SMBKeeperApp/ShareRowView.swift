@@ -10,7 +10,7 @@ struct ShareRowView: View {
     let share: ShareStatus
     var actions = PanelActions()
 
-    @State private var hovering = false
+    @ViewState private var hovering = false
 
     private var isSelected: Bool { store.selectedName == share.name }
     private var action: Presentation.RowAction { store.rowAction(for: share) }

@@ -140,6 +140,11 @@ These are outside the app and optional.
   user is typing, so a missed wake notification cannot strand it.
 - IOKit's power message constants do not import into Swift; they are spelled
   out in `PowerMonitor.swift` from the `iokit_common_msg` formula.
+- Never use `@State`. The macOS 27 SDK implements it as a macro whose plugin
+  ships only with Xcode, so it does not build with the Command Line Tools.
+  Use `@ViewState` (`Sources/SMBKeeperApp/ViewState.swift`), a drop-in with the
+  same `$binding` behaviour. `make` and `make app` refuse to build if `@State`
+  appears anywhere under `Sources/`.
 
 ## First run
 

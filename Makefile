@@ -12,17 +12,28 @@ APPDIR ?= $(PREFIX)/Applications
 APP     = build/SMB Keeper.app
 EXE     = $(APPDIR)/SMB Keeper.app/Contents/MacOS/SMBKeeperApp
 
-.PHONY: all build test release app install uninstall clean
+.PHONY: all build test release app install uninstall clean check-state
 
 all: build
 
-build:
+# @State is a macro in the macOS 27 SDK and its plugin ships only with Xcode,
+# so it does not build with the Command Line Tools. Use @ViewState instead
+# (Sources/SMBKeeperApp/ViewState.swift). This check stops a machine that has
+# Xcode from letting one back in.
+check-state:
+	@if grep -rnE '^[^/]*@State([^A-Za-z0-9_]|$$)' Sources/ >/dev/null; then \
+	  echo "error: '@State' does not build with the Command Line Tools; use '@ViewState' instead:" >&2; \
+	  grep -rnE '^[^/]*@State([^A-Za-z0-9_]|$$)' Sources/ >&2; \
+	  exit 1; \
+	fi
+
+build: check-state
 	swift build
 
-test:
+test: check-state
 	swift run smbkeeper-tests
 
-release:
+release: check-state
 	swift build -c release
 
 app:
