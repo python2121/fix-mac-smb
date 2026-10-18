@@ -89,7 +89,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             removeShare: { [weak self] name in self?.confirmRemove(name) },
             toggleLoginItem: { [weak self] in self?.toggleLoginItem() },
             isLoginItem: { LaunchAgent.isInstalled },
-            quit: { NSApp.terminate(nil) }
+            quit: { NSApp.terminate(nil) },
+            closePanel: { [weak self] in self?.panel.close() }
         )
     }
 

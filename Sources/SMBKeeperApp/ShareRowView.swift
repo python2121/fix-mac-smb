@@ -4,6 +4,7 @@ import SMBKeeperCore
 
 /// One share in the panel list: a state badge, the share's name, one line
 /// saying where it is or what is wrong with it, and the buttons that act on it.
+/// Clicking the row itself opens the volume in Finder when it is mounted.
 /// Deliberately spare — this is a panel you should rarely need to open.
 struct ShareRowView: View {
     @ObservedObject var store: ShareStore
@@ -30,7 +31,6 @@ struct ShareRowView: View {
                     // A path's useful end is its last component, so drop
                     // characters from the front rather than the middle.
                     .truncationMode(secondaryLine.hasPrefix("/") ? .head : .middle)
-                    .textSelection(.enabled)
                     .help(secondaryLine)
             }
             // The bar used to stretch and push these to the trailing edge.
@@ -39,7 +39,6 @@ struct ShareRowView: View {
             Spacer(minLength: 8)
             HStack(spacing: 2) {
                 primaryAction
-                if store.canReveal(share.name) { revealButton }
                 stopMonitoringButton
             }
         }
@@ -51,7 +50,7 @@ struct ShareRowView: View {
         )
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        .onTapGesture { store.select(share.name) }
+        .onTapGesture { open() }
         .contextMenu { contextMenu }
     }
 
@@ -65,6 +64,25 @@ struct ShareRowView: View {
     private var secondaryLine: String {
         if share.state == .healthy, let path = share.mountPath { return path }
         return share.detail
+    }
+
+    /// A mounted share opens in Finder and the panel gets out of the way;
+    /// anything else just toggles the highlight, as there is nothing to open.
+    private func open() {
+        if store.canReveal(share.name) {
+            reveal()
+        } else {
+            store.select(share.name)
+        }
+    }
+
+    /// Leaves no highlight behind: the panel closes under the pointer, so the
+    /// hover never sees it leave and would still be lit on the next open.
+    private func reveal() {
+        store.reveal(share.name)
+        store.clearSelection()
+        hovering = false
+        actions.closePanel()
     }
 
     // MARK: Buttons
@@ -111,16 +129,6 @@ struct ShareRowView: View {
                         .offset(x: 4, y: -2)
                 }
             }
-        }
-    }
-
-    private var revealButton: some View {
-        iconButton(stroke: Color.secondary, help: "Reveal \(share.name) in Finder") {
-            store.reveal(share.name)
-        } label: {
-            Image(systemName: "folder")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Color.secondary)
         }
     }
 
@@ -177,7 +185,7 @@ struct ShareRowView: View {
         }
         if store.canReveal(share.name) {
             Divider()
-            Button("Reveal in Finder") { store.reveal(share.name) }
+            Button("Reveal in Finder") { reveal() }
         }
         Divider()
         Button("Stop monitoring…") { actions.removeShare(share.name) }

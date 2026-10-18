@@ -86,11 +86,11 @@ exclamation mark when one is stale or failing, and an X when one is unmounted.
 
 Shares are listed worst first: anything needing attention is at the top, healthy
 ones below, paused ones last. A row is a state badge, the share's name, where it
-is mounted or what is wrong with it, and three buttons. The first follows the
+is mounted or what is wrong with it, and two buttons. The first follows the
 volume: mount when nothing is attached, unmount when something is, and force
-once an unmount has been asked for and the volume is still there. Then reveal in
-Finder, and stop monitoring, which forgets the share and leaves the volume
-exactly as it is. The footer holds check-now, open-log, add-share and a settings
+once an unmount has been asked for and the volume is still there. The second
+stops monitoring, which forgets the share and leaves the volume exactly as it
+is. Clicking a mounted share's row opens it in Finder and closes the panel. The footer holds check-now, open-log, add-share and a settings
 menu.
 
 Ejecting cleanly before sleep is a per-share setting, `ejectOnSleep` in

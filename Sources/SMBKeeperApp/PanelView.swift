@@ -10,6 +10,7 @@ struct PanelActions {
     var toggleLoginItem: () -> Void = {}
     var isLoginItem: () -> Bool = { false }
     var quit: () -> Void = {}
+    var closePanel: () -> Void = {}
 }
 
 /// The menu bar panel: a header with the aggregate state, the share list
