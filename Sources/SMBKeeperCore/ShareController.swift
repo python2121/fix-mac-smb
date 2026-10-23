@@ -80,10 +80,17 @@ public final class ShareController {
 
     /// Ask for an evaluation `after` seconds from now. Requests are coalesced:
     /// if one is already pending sooner, it is kept; otherwise it is replaced.
+    ///
+    /// The work is timed on the wall clock, the same clock as `pendingAt`. A
+    /// `deadline:` timer counts only awake time, so after a sleep it would fire
+    /// hours late while `pendingAt` claimed it was due, and every wake and tick
+    /// would be coalesced into it. A request already overdue is replaced for
+    /// the same reason, in case a timer still lags behind the clock.
     public func schedule(after seconds: Double, reason: String) {
-        let when = system.now().addingTimeInterval(seconds)
+        let now = system.now()
+        let when = now.addingTimeInterval(seconds)
         lock.lock()
-        if let at = pendingAt, pending != nil, at <= when {
+        if let at = pendingAt, pending != nil, at <= when, at >= now {
             lock.unlock()
             return
         }
@@ -99,7 +106,7 @@ public final class ShareController {
         pending = item
         pendingAt = when
         lock.unlock()
-        queue.asyncAfter(deadline: .now() + max(0, seconds), execute: item)
+        queue.asyncAfter(wallDeadline: .now() + max(0, seconds), execute: item)
     }
 
     /// Forget the backoff so the next evaluation may mount immediately. Used

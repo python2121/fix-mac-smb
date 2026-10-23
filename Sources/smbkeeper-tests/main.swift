@@ -683,6 +683,18 @@ h.test("controller: schedule coalesces to the earliest pending request") {
                 "only the earliest fired; later ones were coalesced")
 }
 
+h.test("controller: an overdue pending request does not swallow new ones after sleep") {
+    let sys = FakeSystem()
+    sys.table = [sys.entry(share: "Alpha")]
+    let c = ShareController(config: makeShare("Alpha"), settings: testSettings(), system: sys, log: quietLog)
+    // A stale-grace recheck is pending when the machine sleeps for hours: the
+    // wall clock moves on, but the timer has not fired.
+    c.schedule(after: 240, reason: "stale grace expired")
+    sys.advance(3 * 3600)
+    c.schedule(after: 0, reason: "wake")
+    expect(waitUntil(2) { sys.calls.contains { $0.hasPrefix("probe") } }, "the wake check ran")
+}
+
 h.test("controller: status change callback fires on transitions") {
     let sys = FakeSystem()
     sys.table = [sys.entry(share: "Alpha")]
